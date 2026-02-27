@@ -86,10 +86,24 @@ def _score_password_exposure(pwned_count: Optional[int]) -> int:
         return 4
 
 
+ROLE_MULTIPLIERS = {
+    "CEO": 1.5,
+    "CTO": 1.5,
+    "CISO": 1.5,
+    "Admin": 1.4,
+    "Finance": 1.35,
+    "HR": 1.2,
+    "Developer": 1.15,
+    "Employee": 1.0,
+    "Intern": 0.9,
+}
+
+
 def _score_single_breach(
     breach: Breach,
     email: str,
-    pwned_count: Optional[int] = None
+    pwned_count: Optional[int] = None,
+    role: str = "Employee"
 ) -> Tuple[int, bool]:
     """Calculate score for a single breach. Returns (score, is_canary_triggered)"""
     
@@ -109,19 +123,26 @@ def _score_single_breach(
     # Factor 4: Password Exposure
     pwd_score = _score_password_exposure(pwned_count)
     
-    total = source_score + data_score + age_score + pwd_score
-    return min(100, total), False
+    # Base Score (Factors 1-4)
+    base_score = source_score + data_score + age_score + pwd_score
+    
+    # Factor 6: Role Impact Multiplier
+    multiplier = ROLE_MULTIPLIERS.get(role, 1.0)
+    final_score = min(100, int(base_score * multiplier))
+    
+    return final_score, False
 
 
 def calculate_risk(
     breaches: List[Breach],
     email: Optional[str] = None,
-    pwned_count: Optional[int] = None
-) -> Tuple[int, str, int]:
-    """Calculate risk score for multiple breaches. Takes highest score."""
+    pwned_count: Optional[int] = None,
+    role: str = "Employee"
+) -> Tuple[int, str, bool]:
+    """Calculate risk score for multiple breaches. Takes highest score (MAX model)."""
     
     if not breaches:
-        return 0, "SAFE", 0
+        return 0, "SAFE", False
     
     max_score = 0
     canary_triggered = False
@@ -130,10 +151,11 @@ def calculate_risk(
         score, is_canary = _score_single_breach(
             breach,
             email or breach.email,
-            pwned_count
+            pwned_count,
+            role
         )
         if is_canary:
-            return 100, "CRITICAL — INTERNAL LEAK DETECTED", 100
+            return 100, "CRITICAL – INTERNAL LEAK", True
         max_score = max(max_score, score)
     
     # Map score to risk level
@@ -142,11 +164,11 @@ def calculate_risk(
     elif max_score >= 60:
         level = "HIGH"
     elif max_score >= 35:
-        level = "MEDIUM"
+        level = "ELEVATED"
     elif max_score >= 1:
         level = "LOW"
     else:
         level = "SAFE"
     
-    return max_score, level, max_score
+    return max_score, level, False
 

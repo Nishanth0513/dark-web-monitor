@@ -32,6 +32,7 @@ class Breach(db.Model):
 class Organization(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
+    org_email = db.Column(db.String(255), nullable=True)  # New field for organization contact email
     admin_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     has_unseen_breaches = db.Column(db.Boolean, default=False)
@@ -41,6 +42,8 @@ class OrgEmail(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), nullable=False)
     org_id = db.Column(db.Integer, db.ForeignKey("organization.id"), nullable=False)
+    role = db.Column(db.String(50), default='Employee')  # CEO, CTO, Admin, etc.
+    systems = db.Column(db.String(500), default='')  # Comma-separated list of systems
     last_checked = db.Column(db.DateTime, nullable=True)
 
 
@@ -52,7 +55,28 @@ class OrgBreach(db.Model):
     breach_date = db.Column(db.DateTime, nullable=False)
     data_exposed = db.Column(db.String(255), nullable=False)
     severity = db.Column(db.String(50), nullable=False)
+    score = db.Column(db.Integer, default=0)
+    is_canary = db.Column(db.Boolean, default=False)
     detected_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class RiskHistory(db.Model):
+    __tablename__ = 'risk_history'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id"), nullable=False)
+    eri = db.Column(db.Float, nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class EmployeeRiskHistory(db.Model):
+    __tablename__ = 'employee_risk_history'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id"), nullable=False)
+    email = db.Column(db.String(255), nullable=False)
+    score = db.Column(db.Integer, nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class RemediationAction(db.Model):

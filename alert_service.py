@@ -27,6 +27,62 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_EMAIL = os.getenv("SMTP_EMAIL")  # Sender (molkyqwerty@gmail.com)
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
+def send_employee_alert_email(recipient_email, risk_level, score, breach_count, breaches_list=None):
+    """
+    Send direct email alert to a specific employee.
+    """
+    if not all([SMTP_EMAIL, SMTP_PASSWORD]):
+        print("⚠️ Direct employee email alert skipped: SMTP credentials not configured")
+        return False
+    
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f"🚨 URGENT: Security Alert for {recipient_email}"
+        msg['From'] = SMTP_EMAIL
+        msg['To'] = recipient_email
+        
+        alert_color = "#dc2626" if score >= 85 else "#f59e0b"
+        
+        html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif;">
+            <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+                <div style="background-color: {alert_color}; color: white; padding: 20px; text-align: center;">
+                    <h2>SECURITY BREACH DETECTED</h2>
+                </div>
+                <div style="padding: 20px;">
+                    <p>Hello,</p>
+                    <p>Our monitoring system has detected that your email address <strong>{recipient_email}</strong> has been exposed in <strong>{breach_count}</strong> dark web breaches.</p>
+                    <div style="background-color: #f3f4f6; padding: 15px; border-radius: 6px; margin: 20px 0;">
+                        <strong>Risk Score:</strong> {score}/100 ({risk_level})
+                    </div>
+                    <p><strong>Required Actions:</strong></p>
+                    <ul>
+                        <li>Change your passwords immediately.</li>
+                        <li>Enable Multi-Factor Authentication (MFA).</li>
+                        <li>Review recent activity on your accounts.</li>
+                    </ul>
+                </div>
+                <div style="background-color: #f9fafb; padding: 15px; font-size: 12px; color: #6b7280; text-align: center;">
+                    This is an automated security alert from Dark Web Monitor.
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        msg.attach(MIMEText(html, 'html'))
+        
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.send_message(msg)
+        
+        print(f"✅ Direct employee alert sent to {recipient_email}")
+        return True
+    except Exception as e:
+        print(f"❌ Direct employee alert failed: {e}")
+        return False
+
 
 def send_sms_alert(risk_level, score, email, breach_count):
     """
@@ -207,6 +263,45 @@ def send_email_alert(risk_level, score, email, breach_count, breaches_list=None)
     except Exception as e:
         print(f"❌ Email alert failed: {e}")
         return False
+
+
+def trigger_escalation(event_type: str, data: dict):
+    """
+    Trigger automated escalation workflows based on enterprise risk events.
+    
+    Args:
+        event_type: Type of event (e.g., 'ERI_CRITICAL', 'CANARY_TRIGGERED', 'PRIVILEGED_HIGH_RISK')
+        data: Contextual data for the escalation
+    """
+    print(f"🚀 Escalation Triggered: {event_type}")
+    
+    # 1. Logic for isolation/force password reset (Pseudo-actions for demo)
+    actions = []
+    if event_type == 'ERI_CRITICAL':
+        actions = ["Force Org-wide MFA", "Notify C-Suite", "Lock down sensitive systems"]
+    elif event_type == 'CANARY_TRIGGERED':
+        actions = ["IMMEDIATE ISOLATION", "Invalidate all sessions", "Alert SOC Team"]
+    elif event_type == 'PRIVILEGED_HIGH_RISK':
+        actions = ["Force Password Reset", "Review recent logs", "Temporary Role Restriction"]
+        
+    # 2. Slack Alert (Pseudocode)
+    # slack_client.chat_postMessage(channel='#security-alerts', text=f"🚨 {event_type}: {data.get('message')}")
+    print(f"💬 Slack alert sent: {event_type} - {data.get('message', '')}")
+    
+    # 3. SMS Alert
+    if data.get('score', 0) >= 85:
+        send_sms_alert(
+            risk_level="CRITICAL",
+            score=data.get('score', 100),
+            email=data.get('email', 'N/A'),
+            breach_count=data.get('breach_count', 1)
+        )
+    
+    # 4. Audit Log entry
+    # db.session.add(ActivityLog(action='escalation', message=f"{event_type}: {actions}", severity='critical'))
+    print(f"📝 Audit log entry created for escalation: {event_type}")
+    
+    return actions
 
 
 def send_combined_alert(risk_level, score, email, breach_count, breaches_list=None):

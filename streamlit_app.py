@@ -5,6 +5,7 @@ import hashlib
 import pandas as pd
 import requests
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -430,7 +431,12 @@ def ensure_default_state():
         st.session_state.active_org_id = None
 
 
-def enterprise_score_for_email(breaches: list[OrgBreach], email: str) -> tuple[int, str]:
+from enterprise_engine import calculate_eri
+from enterprise_visuals import render_enterprise_visuals
+from scheduler import run_enterprise_scheduler
+
+
+def enterprise_score_for_email(breaches: list[OrgBreach], email: str, role: str = "Employee") -> tuple[int, str]:
     """
     Enterprise scoring using advanced 5-factor risk engine.
     Returns (score, level)
@@ -450,7 +456,7 @@ def enterprise_score_for_email(breaches: list[OrgBreach], email: str) -> tuple[i
         )
         breach_objects.append(breach_obj)
     
-    score, level, _ = calculate_risk(breach_objects, email=email)
+    score, level, _ = calculate_risk(breach_objects, email=email, role=role)
     return score, level
 
 
@@ -512,7 +518,8 @@ def _should_run_auto_scan() -> bool:
     last = st.session_state.get("last_auto_scan")
     if last is None:
         return True
-    return (datetime.utcnow() - last).total_seconds() >= 300
+    # 10 minutes = 600 seconds
+    return (datetime.utcnow() - last).total_seconds() >= 600
 
 
 def _run_auto_scan_individual(db_sess, user: User, monitored_emails: list[MonitoredEmail]):
@@ -770,7 +777,7 @@ def render_dashboard(SessionLocal):
 
         # Get first monitored email for risk calculation
         primary_email = monitored_emails[0].email if monitored_emails else None
-        score, risk_level, risk_percentage = calculate_risk(breaches, email=primary_email)
+        score, risk_level, is_canary = calculate_risk(breaches, email=primary_email)
 
         # Trigger alerts for HIGH (60+) or CRITICAL (85+) risk
         print(f"🔍 Dashboard Alert Check:")
@@ -838,7 +845,7 @@ def render_dashboard(SessionLocal):
             st.metric("Risk Level", f"{risk_emoji} {risk_level}", delta=f"Score {score}")
         with col3:
             st.write("Risk Meter")
-            st.progress(risk_percentage / 100)
+            st.progress(score / 100)
         with col4:
             if last_checked:
                 st.metric(
@@ -1093,6 +1100,9 @@ def render_dashboard(SessionLocal):
 
 
 def render_enterprise_dashboard(SessionLocal, user: User):
+    # Auto-refresh every 10 minutes (600,000ms) without blocking
+    st_autorefresh(interval=600000, key="enterprise_refresh")
+    
     db_sess = SessionLocal()
     try:
         # Add sidebar for Enterprise dashboard
@@ -1147,13 +1157,15 @@ def render_enterprise_dashboard(SessionLocal, user: User):
         with st.expander("Create organization", expanded=(len(orgs) == 0)):
             with st.form("create_org_form"):
                 org_name = st.text_input("Organization name", placeholder="DemoCorp")
+                org_email = st.text_input("Organization Contact Email", placeholder="security@democorp.com")
                 submitted = st.form_submit_button("Create", key="create_org_button")
                 if submitted:
                     name_clean = (org_name or "").strip()
+                    email_clean = (org_email or "").strip().lower()
                     if not name_clean:
                         st.error("Organization name is required.")
                     else:
-                        org = Organization(name=name_clean, admin_user_id=user.id)
+                        org = Organization(name=name_clean, org_email=email_clean, admin_user_id=user.id)
                         db_sess.add(org)
                         db_sess.commit()
                         st.success("Organization created.")
@@ -1183,6 +1195,13 @@ def render_enterprise_dashboard(SessionLocal, user: User):
         )
 
         _run_auto_scan_enterprise(db_sess, active_org, employees)
+        
+        # Periodic systemic evaluation (Enterprise Mode)
+        # We can check if enough time has passed since the last auto-scan
+        if _should_run_auto_scan():
+            run_enterprise_scheduler(db_sess, active_org)
+            st.session_state.last_auto_scan = datetime.utcnow()
+            
         employee_emails = [e.email for e in employees] or ["__none__"]
 
         org_breaches = (
@@ -1192,91 +1211,24 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             .all()
         )
 
-        per_email_scores = {}
-        per_email_levels = {}
-        for e in employees:
-            b_list = [b for b in org_breaches if b.email == e.email]
-            score, level = enterprise_score_for_email(b_list, e.email)
-            per_email_scores[e.email] = score
-            per_email_levels[e.email] = level
-
-        monitored_count = len(employees)
-        exposed_count = sum(1 for e in employees if per_email_scores.get(e.email, 0) > 0)
-        high_risk_count = sum(1 for e in employees if per_email_scores.get(e.email, 0) >= 85)
-
-        org_score = 0
-        if monitored_count > 0:
-            org_score = int(round(sum(per_email_scores.values()) / monitored_count))
-        
-        # Map org score to level using same thresholds
-        if org_score >= 85:
-            org_level = "CRITICAL"
-        elif org_score >= 60:
-            org_level = "HIGH"
-        elif org_score >= 35:
-            org_level = "MEDIUM"
-        elif org_score >= 1:
-            org_level = "LOW"
-        else:
-            org_level = "SAFE"
-
-        # Trigger alerts for HIGH (60+) or CRITICAL (85+) organization risk
-        if org_score >= 60 and employees:
-            # Find highest risk employee email for alert context
-            highest_risk_email = max(per_email_scores.items(), key=lambda x: x[1])[0] if per_email_scores else None
-            
-            if highest_risk_email:
-                # Prepare breach data for alert
-                employee_breaches = [b for b in org_breaches if b.email == highest_risk_email]
-                breaches_data = [
-                    {
-                        'breach_name': b.breach_name,
-                        'breach_date': b.breach_date.strftime('%Y-%m-%d'),
-                        'data_exposed': b.data_exposed
-                    }
-                    for b in employee_breaches[:10]  # Send top 10 breaches
-                ]
-                
-                # Send combined SMS + Email alert
-                try:
-                    alert_results = send_combined_alert(
-                        risk_level=org_level,
-                        score=org_score,
-                        email=f"{active_org.name} (highest risk: {highest_risk_email})",
-                        breach_count=len(org_breaches),
-                        breaches_list=breaches_data
-                    )
-                    
-                    # Show alert status in sidebar
-                    if alert_results.get('sms_sent') or alert_results.get('email_sent'):
-                        with st.sidebar:
-                            st.success("🔔 Enterprise Alert sent!")
-                            if alert_results.get('sms_sent'):
-                                st.caption("✓ SMS sent")
-                            if alert_results.get('email_sent'):
-                                st.caption("✓ Email sent to shreyaburra18@gmail.com")
-                except Exception as e:
-                    print(f"Alert service error: {e}")
+        # 1. Dashboard Metrics (Individual)
+        eri_data = calculate_eri(employees, org_breaches, db_sess.query(RemediationAction).all())
+        org_score = eri_data['eri']
+        org_level = eri_data['label']
+        metrics = eri_data['metrics']
 
         # Color coding
         risk_colors = {
             "SAFE": "🟢",
             "LOW": "🟢",
-            "MEDIUM": "🟡",
+            "ELEVATED": "🟡",
             "HIGH": "🟠",
             "CRITICAL": "🔴",
         }
         org_emoji = risk_colors.get(org_level, "⚪")
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Employees Monitored", monitored_count)
-        with col2:
-            st.metric("Employees Exposed", exposed_count)
-        with col3:
-            st.metric("High Risk Accounts", high_risk_count)
-        with col4:
-            st.metric("Organization Risk Score", f"{org_emoji} {org_score}/100", delta=org_level)
+        # 2. Executive Visual Intelligence Modules
+        render_enterprise_visuals(db_sess, active_org, employees, org_breaches)
 
         st.markdown("---")
 
@@ -1285,12 +1237,12 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             st.subheader("Employee Emails")
             if employees:
                 for e in employees:
-                    score = per_email_scores.get(e.email, 0)
-                    lvl = per_email_levels.get(e.email, "SAFE")
+                    b_list = [b for b in org_breaches if b.email == e.email]
+                    score, lvl = enterprise_score_for_email(b_list, e.email, e.role)
                     emoji = risk_colors.get(lvl, "⚪")
                     col1, col2 = st.columns([4, 1])
                     with col1:
-                        st.write(f"- {emoji} {e.email} — {score}/100 ({lvl})")
+                        st.write(f"- {emoji} {e.email} ({e.role}) — {score}/100")
                     with col2:
                         if st.button("🗑️", key=f"delete_employee_{e.id}"):
                             db_sess.delete(e)
@@ -1303,6 +1255,8 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             if active_org:
                 with st.form("add_employee_email_form"):
                     new_email = st.text_input("Add employee email", placeholder="admin@democorp.com")
+                    role = st.selectbox("Role", ["CEO", "CTO", "CISO", "Admin", "Finance", "HR", "Developer", "Employee", "Intern"])
+                    systems = st.text_input("Systems (comma-separated)", placeholder="AWS, GitHub, SAP")
                     submitted = st.form_submit_button("Add", key="add_employee_button")
                     if submitted:
                         email_clean = (new_email or "").strip().lower()
@@ -1317,7 +1271,7 @@ def render_enterprise_dashboard(SessionLocal, user: User):
                             if exists:
                                 st.warning("This email is already in the organization list.")
                             else:
-                                db_sess.add(OrgEmail(org_id=active_org.id, email=email_clean))
+                                db_sess.add(OrgEmail(org_id=active_org.id, email=email_clean, role=role, systems=systems))
                                 db_sess.commit()
                                 st.success("Employee email added.")
                                 st.rerun()
@@ -1325,41 +1279,26 @@ def render_enterprise_dashboard(SessionLocal, user: User):
                 st.error("Organization not selected or invalid. Please select an organization.")
 
             if st.button("Run Enterprise Scan Now", key="run_enterprise_scan_button"):
-                new_breach_found = False
-                for e in employees:
-                    live = _live_breach_dicts_for_email(e.email)
-                    breach_dicts = live if live is not None else simulate_breach_check(e.email)
-                    for sb in breach_dicts:
-                        existing = (
-                            db_sess.query(OrgBreach)
-                            .filter(
-                                OrgBreach.org_id == active_org.id,
-                                OrgBreach.email == e.email,
-                                OrgBreach.breach_name == sb["breach_name"],
-                            )
-                            .first()
-                        )
-                        if existing:
-                            continue
-                        db_sess.add(
-                            OrgBreach(
-                                org_id=active_org.id,
-                                email=e.email,
-                                breach_name=sb["breach_name"],
-                                breach_date=sb["breach_date"],
-                                data_exposed=sb["data_exposed"],
-                                severity=sb["severity"],
-                            )
-                        )
-                        new_breach_found = True
-                    e.last_checked = datetime.utcnow()
-
-                if new_breach_found:
-                    active_org.has_unseen_breaches = True
-
-                db_sess.commit()
-                st.success("Enterprise scan completed.")
+                with st.spinner("Executing Enterprise Risk Engine..."):
+                    run_enterprise_scheduler(db_sess, active_org)
+                st.success("Enterprise scan and ERI calculation completed.")
                 st.rerun()
+
+            st.markdown("---")
+            st.subheader("🛡️ Enterprise Password Monitor")
+            with st.form("enterprise_password_monitor_form"):
+                pwd = st.text_input(
+                    "Securely check for known breached passwords",
+                    type="password",
+                    help="Check against the Have I Been Pwned database using SHA-1 k-anonymity. No data is stored.",
+                )
+                submitted_pwd = st.form_submit_button("Check Credential", key="ent_check_password_button")
+                if submitted_pwd:
+                    pwned, count = check_password_pwned(pwd)
+                    if pwned:
+                        st.error(f"⚠️ Compromised! This password has appeared in {count} known breaches.")
+                    else:
+                        st.success("✅ Secure. This credential was not found in known breach snapshots.")
 
             # Debug: Force live scan and show results
             with st.expander("Debug: Force live breach check (no persistence)"):
@@ -1380,10 +1319,6 @@ def render_enterprise_dashboard(SessionLocal, user: User):
 
         with right:
             st.subheader("Organization Breach History")
-            st.image(
-                "https://images.pexels.com/photos/5380648/pexels-photo-5380648.jpeg?auto=compress&cs=tinysrgb&w=800",
-                caption="Attack surface mapping across employee identities and access layers.",
-            )
             if org_breaches:
                 df = pd.DataFrame(
                     [
