@@ -31,122 +31,73 @@ from alert_service import send_combined_alert
 
 def show_breach_response_redirect():
     """
-    Show redirect page to Breach Response Center dashboard
+    Show Breach Response Center dashboard directly (no login required)
     """
     
-    st.title("🚨 Breach Response Center")
-    st.caption("Redirecting to dedicated dashboard...")
-    
-    # Display redirect information
-    st.markdown("""
-    <div style='text-align: center; padding: 2rem;'>
-        <h2>🚨 Breach Response Center</h2>
-        <p style='font-size: 1.2rem; margin: 2rem 0;'>
-            The Breach Response Center is available as a dedicated dashboard for enhanced security management.
-        </p>
-        <div style='background: rgba(15, 23, 42, 0.8); padding: 2rem; border-radius: 10px; margin: 2rem 0;'>
-            <h3>🔗 Access the Dashboard</h3>
-            <p style='font-size: 1.1rem; margin: 1rem 0;'>
-                <strong>URL:</strong> <code>http://localhost:8503</code>
-            </p>
-            <p style='color: #22c55e; font-size: 1rem;'>
-                ✅ The dashboard should open automatically in a new tab
-            </p>
-        </div>
-        <div style='background: rgba(34, 197, 94, 0.1); padding: 1.5rem; border-radius: 8px; margin: 2rem 0; border-left: 4px solid #22c55e;'>
-            <h4>📋 Features Available:</h4>
-            <ul style='text-align: left; max-width: 500px; margin: 0 auto;'>
-                <li>🔴 Breached account management</li>
-                <li>⚠️ Required security actions</li>
-                <li>✅ Progress tracking</li>
-                <li>📊 Completion analytics</li>
-                <li>📈 Activity monitoring</li>
-            </ul>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Auto-redirect using JavaScript
-    st.markdown("""
-    <script>
-        setTimeout(function() {
-            window.open('http://localhost:8503', '_blank');
-        }, 2000);
-    </script>
-    """, unsafe_allow_html=True)
-    
-    # Manual redirect button
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        if st.button("🚀 Open Breach Response Center", type="primary", use_container_width=True, key="redirect_brc_button"):
-            st.markdown("""
-            <div style="text-align: center; padding: 1rem; margin: 1rem 0;">
-                <h3>🚨 Breach Response Center</h3>
-                <p>Click the link below to open the dedicated dashboard:</p>
-                <a href="http://localhost:8503" target="_blank" 
-                   style="background: linear-gradient(120deg, #06b6d4, #22c55e); 
-                          color: #020617; padding: 15px 30px; text-decoration: none; 
-                          border-radius: 8px; font-weight: bold; display: inline-block;
-                          margin: 10px 0;">
-                    🚀 Open Breach Response Center
-                </a>
-                <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">
-                    Opens in new tab at http://localhost:8503
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Status check
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("🔍 Quick Status")
-        try:
-            # Try to get basic stats without full context
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-            
-            engine = create_engine(DATABASE_URL)
-            db_session = sessionmaker(bind=engine)()
-            
-            breached_count = db_session.query(Breach).distinct(Breach.email).count()
-            pending_count = db_session.query(RemediationAction).filter_by(status='pending').count()
-            
-            st.metric("Breached Accounts", breached_count)
-            st.metric("Pending Actions", pending_count)
-            
-            db_session.close()
-        except Exception as e:
-            st.warning("Unable to fetch status - dashboard may be starting up")
-    
-    with col2:
-        st.subheader("📞 Support")
-        st.write("""
-        **Need Help?**
+    # Import and run the Breach Response Center directly
+    try:
+        # Import the main function from breach_response_dashboard
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         
-        - Ensure the Breach Response Center is running on port 8503
-        - Check that the database is accessible
-        - Contact support if issues persist
+        from breach_response_dashboard import main as brc_main
         
-        **Manual Start:**
-        ```bash
-        streamlit run breach_response_dashboard.py --server.port 8503
-        ```
+        # Set up a dummy session for BRC
+        if not hasattr(st.session_state, 'user_id'):
+            st.session_state.user_id = 1
+        if not hasattr(st.session_state, 'mode'):
+            st.session_state.mode = "Breach Response Center"
+            
+        # Run the BRC dashboard
+        brc_main()
+        
+    except Exception as e:
+        st.error(f"Error loading Breach Response Center: {e}")
+        st.info("Please run the Breach Response Center separately:")
+        st.code("streamlit run breach_response_dashboard.py --server.port 8503")
+        
+        # Show helpful info
+        st.markdown("---")
+        st.markdown("### 🚨 Breach Response Center Features:")
+        st.markdown("""
+        - **Breach Management**: Track and manage security breaches
+        - **Remediation Actions**: Monitor and complete security tasks
+        - **Activity Logging**: Track all security-related activities
+        - **Email Previews**: View alert emails before sending
+        - **Risk Analytics**: Analyze breach patterns and trends
         """)
-    
-    # Return to main app option
-    st.divider()
-    st.markdown("---")
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        if st.button("🏠 Return to Main Dashboard", use_container_width=True):
-            st.session_state.mode = "Individual"
+
+
+def login_form(SessionLocal):
+    email = st.text_input("Email", placeholder="you@example.com")
+    password = st.text_input("Password", type="password", placeholder="Enter password")
+    submitted = st.form_submit_button("Login")
+    if submitted:
+        email_clean = (email or "").strip().lower()
+        password_clean = password or ""
+        if not email_clean or not password_clean:
+            st.error("Both fields are required.")
+            return
+        db_sess = SessionLocal()
+        try:
+            user = db_sess.execute(
+                select(User).where(User.email == email_clean)
+            ).scalar_one_or_none()
+            if not user or not check_password_hash(user.password_hash, password_clean):
+                st.error("Invalid email or password.")
+                return
+            st.session_state.user_id = user.id
+            st.session_state.mode = "Individual" if access_mode == "Individual" else "Enterprise"
             st.rerun()
+        finally:
+            db_sess.close()
+
+
+def logout_button():
+    if st.button("Logout"):
+        st.session_state.user_id = None
+        st.rerun()
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1489,6 +1440,7 @@ def main():
               </div>
               <div class="dw-nav-right">
                 <a href="#home" class="dw-nav-link">Home</a>
+                <a href="#breach-response" class="dw-nav-link">Breach Response</a>
                 <a href="#about" class="dw-nav-link">About</a>
                 <a href="#login" class="dw-nav-link">Login</a>
                 <a href="#faq" class="dw-nav-link">FAQ</a>
@@ -1503,71 +1455,212 @@ def main():
         with hero:
             st.markdown('<div id="home" class="dw-hero-wrap">', unsafe_allow_html=True)
 
-            # Title + tagline
-            st.markdown(
-                """
-                <div class="dw-hero-title">DARK WEB MONITOR</div>
-                <div class="dw-hero-subtitle">
-                  Real-Time Dark Web Breach Intelligence Console
-                </div>
-                <div class="dw-hero-tagline">
-                  DARK WEB • STEALER LOGS • CREDENTIAL DUMPS • LEAKED CORP DATA
-                </div>
-                <div style="margin-top:1rem;">
-                  <span class="dw-hero-badge">
-                    <span class="dw-dot-live"></span>
-                    LIVE DARK WEB MONITORING
-                  </span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            # Hero section with image and content side by side
+            col1, col2 = st.columns([1.2, 1])
+            
+            with col1:
+                # Title + tagline
+                st.markdown(
+                    """
+                    <div class="dw-hero-title">DARK WEB MONITOR</div>
+                    <div class="dw-hero-subtitle">Real-Time Dark Web Breach Intelligence Console</div>
+                    <div class="dw-hero-tagline">DARK WEB • STEALER LOGS • CREDENTIAL DUMPS • LEAKED CORP DATA</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-            # Metrics row
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.markdown('<div class="dw-hero-metric-label">LEAKED IDENTITIES (SIM)</div>', unsafe_allow_html=True)
-                st.markdown('<div class="dw-hero-metric-value">12,431</div>', unsafe_allow_html=True)
-            with m2:
-                st.markdown('<div class="dw-hero-metric-label">ACTIVE FEEDS</div>', unsafe_allow_html=True)
-                st.markdown('<div class="dw-hero-metric-value">27</div>', unsafe_allow_html=True)
-            with m3:
-                st.markdown('<div class="dw-hero-metric-label">CRITICAL CLUSTERS</div>', unsafe_allow_html=True)
-                st.markdown('<div class="dw-hero-metric-value">9</div>', unsafe_allow_html=True)
+                # Live badge + metrics
+                st.markdown(
+                    """
+                    <div style="margin-top: 1.8rem; display: flex; align-items: center; gap: 1.8rem;">
+                      <div class="dw-hero-badge">
+                        <div class="dw-dot-live"></div>
+                        LIVE DARK WEB MONITORING
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-            # Description block
-            st.markdown(
-                """
-                <div style="margin-top:1.4rem;font-size:0.9rem;color:#d1d5db;">
-                  This console continuously:
-                  <ul style="margin-top:0.35rem;">
-                    <li>Watches dark web forums, stealer logs and credential dumps for your identities.</li>
-                    <li>Maps exposed emails and passwords into individual and enterprise risk scores.</li>
-                    <li>Maintains a historical breach ledger so you can prove what was leaked and when.</li>
-                    <li>Surfaces tactical recommendations so teams can reset, rotate and lock down access fast.</li>
-                  </ul>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                # Metrics row
+                st.markdown(
+                    """
+                    <div style="display: flex; gap: 2rem; margin-top: 1.8rem;">
+                      <div>
+                        <div class="dw-hero-metric-label">LEAKED IDENTITIES (SIM)</div>
+                        <div class="dw-hero-metric-value">12,431</div>
+                      </div>
+                      <div>
+                        <div class="dw-hero-metric-label">ACTIVE FEEDS</div>
+                        <div class="dw-hero-metric-value">27</div>
+                      </div>
+                      <div>
+                        <div class="dw-hero-metric-label">CRITICAL CLUSTERS</div>
+                        <div class="dw-hero-metric-value">9</div>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-            # Full-width hero image + attack bullets
-            st.markdown('<div id="about" class="dw-glass">', unsafe_allow_html=True)
-            st.image(
-                "https://media.istockphoto.com/id/1144604245/photo/a-computer-system-hacked-warning.jpg?s=612x612&w=0&k=20&c=U45FHOm5rflXIRqmYByxlQANtdtycEdFZz2Vp5dgI8E=",
-                caption="Critical breach telemetry detected across dark web attack surfaces.",
-            )
-            st.markdown(
-                """
-                <ul class="dw-attack-list">
-                  <li>🧨 Ransomware crews trading initial access credentials</li>
-                  <li>🕶️ Stealer logs exposing corporate VPN & email accounts</li>
-                  <li>📦 Cloud snapshots & code repos surfacing in private dumps</li>
-                </ul>
-                """,
-                unsafe_allow_html=True,
-            )
+                # Feature bullets
+                st.markdown(
+                    """
+                    <div style="margin-top: 2rem;">
+                      <p style="color: #e5e7eb; font-size: 0.95rem; margin-bottom: 1rem;">This console continuously:</p>
+                      <ul style="color: #cbd5e1; font-size: 0.9rem; line-height: 1.8; list-style: none; padding-left: 0;">
+                        <li>Watches dark web forums, stealer logs and credential dumps for your identities.</li>
+                        <li>Maps exposed emails and passwords into individual and enterprise risk scores.</li>
+                        <li>Maintains a historical breach ledger so you can prove what was leaked and when.</li>
+                        <li>Surfaces tactical recommendations so teams can reset, rotate and lock down access fast.</li>
+                      </ul>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            
+            with col2:
+                # Hero image
+                st.markdown(
+                    """
+                    <div style="margin-top: 2rem; border-radius: 12px; overflow: hidden; box-shadow: 0 0 30px rgba(0,255,204,0.3), 0 0 60px rgba(6,182,212,0.2);">
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.image(
+                    "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&q=80",
+                    use_container_width=True,
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Additional security badges
+                st.markdown(
+                    """
+                    <div style="margin-top: 1.5rem; padding: 1.2rem; background: rgba(15,23,42,0.8); border-radius: 10px; border: 1px solid rgba(0,255,204,0.2);">
+                      <div style="font-size: 0.75rem; color: #00ffcc; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 0.8rem;">SECURITY FEATURES</div>
+                      <div style="font-size: 0.85rem; color: #cbd5e1; line-height: 1.6;">
+                        • Real-time breach detection<br>
+                        • SMS & Email alerts<br>
+                        • Risk-based scoring<br>
+                        • Enterprise monitoring<br>
+                        • Breach response center
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
             st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Professional features section
+            st.markdown("---")
+            st.markdown('<div id="about"></div>', unsafe_allow_html=True)
+            
+            st.markdown(
+                """
+                <div style="text-align: center; margin: 3rem 0 2rem 0;">
+                    <h2 style="font-size: 2rem; color: #00ffcc; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 0.5rem;">
+                        COMPREHENSIVE THREAT INTELLIGENCE
+                    </h2>
+                    <p style="font-size: 1rem; color: #9ca3c7; max-width: 700px; margin: 0 auto;">
+                        Advanced breach detection and risk analysis powered by real-time dark web monitoring
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            
+            # Three-column feature cards
+            feat1, feat2, feat3 = st.columns(3)
+            
+            with feat1:
+                st.markdown(
+                    """
+                    <div class="dw-glass" style="padding: 2rem; text-align: center; height: 100%;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;">🔍</div>
+                        <h3 style="color: #00ffcc; font-size: 1.1rem; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.1em;">
+                            Dark Web Monitoring
+                        </h3>
+                        <p style="color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;">
+                            Continuous surveillance of dark web forums, stealer logs, and credential dumps to detect exposed identities in real-time.
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            
+            with feat2:
+                st.markdown(
+                    """
+                    <div class="dw-glass" style="padding: 2rem; text-align: center; height: 100%;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;">⚡</div>
+                        <h3 style="color: #00ffcc; font-size: 1.1rem; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.1em;">
+                            Risk-Based Scoring
+                        </h3>
+                        <p style="color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;">
+                            5-factor risk engine analyzes breach severity, data types, age, and password exposure to calculate precise threat scores.
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            
+            with feat3:
+                st.markdown(
+                    """
+                    <div class="dw-glass" style="padding: 2rem; text-align: center; height: 100%;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;">�</div>
+                        <h3 style="color: #00ffcc; font-size: 1.1rem; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.1em;">
+                            Instant Alerts
+                        </h3>
+                        <p style="color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;">
+                            Automated SMS and email notifications when high-risk breaches are detected, with detailed remediation guidance.
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Additional capabilities
+            cap1, cap2 = st.columns(2)
+            
+            with cap1:
+                st.markdown(
+                    """
+                    <div class="dw-glass" style="padding: 1.5rem;">
+                        <h4 style="color: #00ffcc; font-size: 0.95rem; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.1em;">
+                            🏢 Enterprise Monitoring
+                        </h4>
+                        <ul style="color: #cbd5e1; font-size: 0.85rem; line-height: 1.8; list-style: none; padding-left: 0;">
+                            <li>• Monitor unlimited employee email addresses</li>
+                            <li>• Unified organization risk dashboard</li>
+                            <li>• Breach aggregation across all accounts</li>
+                            <li>• Executive reporting and analytics</li>
+                        </ul>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            
+            with cap2:
+                st.markdown(
+                    """
+                    <div class="dw-glass" style="padding: 1.5rem;">
+                        <h4 style="color: #00ffcc; font-size: 0.95rem; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.1em;">
+                            🛡️ Security Operations
+                        </h4>
+                        <ul style="color: #cbd5e1; font-size: 0.85rem; line-height: 1.8; list-style: none; padding-left: 0;">
+                            <li>• Historical breach ledger and audit trail</li>
+                            <li>• Password exposure verification (HIBP)</li>
+                            <li>• PDF breach reports for compliance</li>
+                            <li>• Breach response center integration</li>
+                        </ul>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1586,6 +1679,38 @@ def main():
             if st.button("Back to login", key="back_to_login_button"):
                 st.session_state.show_register = False
                 st.rerun()
+
+        st.markdown("---")
+        st.markdown('<div id="breach-response"></div>', unsafe_allow_html=True)
+        
+        # Breach Response Center Section
+        st.markdown('<div class="dw-glass">', unsafe_allow_html=True)
+        st.markdown("### 🚨 Breach Response Center")
+        st.markdown(
+            """
+            **Professional breach response and incident management dashboard**
+            
+            The Breach Response Center provides advanced tools for security teams to:
+            - Track and manage breach remediation actions
+            - Generate detailed incident reports
+            - Monitor response team activities
+            - Classify breaches by severity and impact
+            - Coordinate response workflows
+            """
+        )
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.info("🔒 **No login required** - Access the Breach Response Center directly")
+        with col2:
+            if st.button("🚀 Open Breach Response Center", type="primary", use_container_width=True, key="landing_brc_button"):
+                st.session_state.mode = "Breach Response Center"
+                st.session_state.user_id = 1  # Set a dummy user ID for BRC
+                st.success("📂 Opening Breach Response Center...")
+                st.rerun()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("---")
 
         # Simple FAQ section
         st.markdown('<div id="faq"></div>', unsafe_allow_html=True)
