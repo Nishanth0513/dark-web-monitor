@@ -58,28 +58,28 @@ def ensure_default_state():
         st.session_state.active_org_id = None
 
 
-def enterprise_score_for_email(breaches: list[OrgBreach]) -> int:
+def enterprise_score_for_email(breaches: list[OrgBreach], email: str) -> tuple[int, str]:
     """
-    Enterprise scoring (0-100):
-    - Any password leak: +40
-    - Each breach: +10
+    Enterprise scoring using advanced 5-factor risk engine.
+    Returns (score, level)
     """
     if not breaches:
-        return 0
-    score = len(breaches) * 10
-    if any("password" in (b.data_exposed or "").lower() for b in breaches):
-        score += 40
-    return min(100, score)
-
-
-def enterprise_level_from_score(score_0_100: int) -> str:
-    if score_0_100 == 0:
-        return "SAFE"
-    if score_0_100 <= 33:
-        return "MEDIUM"
-    if score_0_100 <= 66:
-        return "HIGH"
-    return "CRITICAL"
+        return 0, "SAFE"
+    
+    # Convert OrgBreach to Breach for risk engine compatibility
+    breach_objects = []
+    for b in breaches:
+        breach_obj = Breach(
+            email=b.email,
+            breach_name=b.breach_name,
+            breach_date=b.breach_date,
+            data_exposed=b.data_exposed,
+            severity=b.severity,
+        )
+        breach_objects.append(breach_obj)
+    
+    score, level, _ = calculate_risk(breach_objects, email=email)
+    return score, level
 
 
 def check_password_pwned(password: str) -> tuple[bool, int]:
@@ -346,13 +346,25 @@ def render_dashboard(SessionLocal):
                 default=None,
             )
 
-        score, risk_level, risk_percentage = calculate_risk(breaches)
+        # Get first monitored email for risk calculation
+        primary_email = monitored_emails[0].email if monitored_emails else None
+        score, risk_level, risk_percentage = calculate_risk(breaches, email=primary_email)
+
+        # Color coding for risk levels
+        risk_colors = {
+            "SAFE": "🟢",
+            "LOW": "🟢",
+            "MEDIUM": "🟡",
+            "HIGH": "🟠",
+            "CRITICAL": "🔴",
+        }
+        risk_emoji = risk_colors.get(risk_level.split("—")[0].strip(), "⚪")
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Breaches", total_breaches)
         with col2:
-            st.metric("Risk Level", risk_level, delta=f"Score {score}")
+            st.metric("Risk Level", f"{risk_emoji} {risk_level}", delta=f"Score {score}")
         with col3:
             st.write("Risk Meter")
             st.progress(risk_percentage / 100)
@@ -365,6 +377,41 @@ def render_dashboard(SessionLocal):
                 )
             else:
                 st.metric("Last Scanned", "Never")
+
+        st.markdown("---")
+
+        # Action Triggers based on risk level
+        if score >= 85:
+            st.error(
+                "🚨 **CRITICAL RISK DETECTED** — Immediate action required:\n"
+                "- Force password reset for all monitored accounts\n"
+                "- Enable account isolation/blocking\n"
+                "- Alert security team immediately\n"
+                "- Review all recent account activity"
+            )
+        elif score >= 60:
+            st.warning(
+                "⚠️ **HIGH RISK** — Urgent action recommended:\n"
+                "- Send Slack/email alert to user\n"
+                "- Require MFA setup if not enabled\n"
+                "- Flag account for security review\n"
+                "- Monitor for suspicious activity"
+            )
+        elif score >= 35:
+            st.info(
+                "ℹ️ **MEDIUM RISK** — Advisory actions:\n"
+                "- Prompt user to enable MFA\n"
+                "- Send advisory email about breach\n"
+                "- Recommend password change\n"
+                "- Monitor account status"
+            )
+        elif score >= 1:
+            st.success(
+                "✅ **LOW RISK** — Monitoring only:\n"
+                "- Continue regular monitoring\n"
+                "- No immediate action required\n"
+                "- Account status: Green"
+            )
 
         st.markdown("---")
 
@@ -607,18 +654,42 @@ def render_enterprise_dashboard(SessionLocal, user: User):
         )
 
         per_email_scores = {}
+        per_email_levels = {}
         for e in employees:
             b_list = [b for b in org_breaches if b.email == e.email]
-            per_email_scores[e.email] = enterprise_score_for_email(b_list)
+            score, level = enterprise_score_for_email(b_list, e.email)
+            per_email_scores[e.email] = score
+            per_email_levels[e.email] = level
 
         monitored_count = len(employees)
         exposed_count = sum(1 for e in employees if per_email_scores.get(e.email, 0) > 0)
-        high_risk_count = sum(1 for e in employees if per_email_scores.get(e.email, 0) >= 67)
+        high_risk_count = sum(1 for e in employees if per_email_scores.get(e.email, 0) >= 85)
 
         org_score = 0
         if monitored_count > 0:
             org_score = int(round(sum(per_email_scores.values()) / monitored_count))
-        org_level = enterprise_level_from_score(org_score)
+        
+        # Map org score to level using same thresholds
+        if org_score >= 85:
+            org_level = "CRITICAL"
+        elif org_score >= 60:
+            org_level = "HIGH"
+        elif org_score >= 35:
+            org_level = "MEDIUM"
+        elif org_score >= 1:
+            org_level = "LOW"
+        else:
+            org_level = "SAFE"
+
+        # Color coding
+        risk_colors = {
+            "SAFE": "🟢",
+            "LOW": "🟢",
+            "MEDIUM": "🟡",
+            "HIGH": "🟠",
+            "CRITICAL": "🔴",
+        }
+        org_emoji = risk_colors.get(org_level, "⚪")
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -628,7 +699,7 @@ def render_enterprise_dashboard(SessionLocal, user: User):
         with col3:
             st.metric("High Risk Accounts", high_risk_count)
         with col4:
-            st.metric("Organization Risk Score", f"{org_score}/100", delta=org_level)
+            st.metric("Organization Risk Score", f"{org_emoji} {org_score}/100", delta=org_level)
 
         st.markdown("---")
 
@@ -638,8 +709,9 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             if employees:
                 for e in employees:
                     score = per_email_scores.get(e.email, 0)
-                    lvl = enterprise_level_from_score(score)
-                    st.write(f"- {e.email} — {score}/100 ({lvl})")
+                    lvl = per_email_levels.get(e.email, "SAFE")
+                    emoji = risk_colors.get(lvl, "⚪")
+                    st.write(f"- {emoji} {e.email} — {score}/100 ({lvl})")
             else:
                 st.info("No employee emails yet.")
 
