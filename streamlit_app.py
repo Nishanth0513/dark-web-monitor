@@ -9,11 +9,143 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from models import db, User, MonitoredEmail, Breach, Organization, OrgEmail, OrgBreach
+from models import db, User, MonitoredEmail, Breach, Organization, OrgEmail, OrgBreach, RemediationAction
 from brain import fetch_email_breaches as fetch_live_email_breaches, pwned_password_count
 from risk_engine import calculate_risk
 from pdf_service import generate_breach_report
 from scheduler import simulate_breach_check
+from breach_response import (
+    get_pending_actions,
+    get_completed_actions,
+    mark_action_completed,
+    get_response_status,
+    calculate_completion_rate,
+    get_action_summary,
+    get_breach_statistics,
+    get_recent_activities,
+    save_remediation_actions
+)
+from breach_response_ui import show_breach_response_center
+
+
+def show_breach_response_redirect():
+    """
+    Show redirect page to Breach Response Center dashboard
+    """
+    
+    st.title("🚨 Breach Response Center")
+    st.caption("Redirecting to dedicated dashboard...")
+    
+    # Display redirect information
+    st.markdown("""
+    <div style='text-align: center; padding: 2rem;'>
+        <h2>🚨 Breach Response Center</h2>
+        <p style='font-size: 1.2rem; margin: 2rem 0;'>
+            The Breach Response Center is available as a dedicated dashboard for enhanced security management.
+        </p>
+        <div style='background: rgba(15, 23, 42, 0.8); padding: 2rem; border-radius: 10px; margin: 2rem 0;'>
+            <h3>🔗 Access the Dashboard</h3>
+            <p style='font-size: 1.1rem; margin: 1rem 0;'>
+                <strong>URL:</strong> <code>http://localhost:8503</code>
+            </p>
+            <p style='color: #22c55e; font-size: 1rem;'>
+                ✅ The dashboard should open automatically in a new tab
+            </p>
+        </div>
+        <div style='background: rgba(34, 197, 94, 0.1); padding: 1.5rem; border-radius: 8px; margin: 2rem 0; border-left: 4px solid #22c55e;'>
+            <h4>📋 Features Available:</h4>
+            <ul style='text-align: left; max-width: 500px; margin: 0 auto;'>
+                <li>🔴 Breached account management</li>
+                <li>⚠️ Required security actions</li>
+                <li>✅ Progress tracking</li>
+                <li>📊 Completion analytics</li>
+                <li>📈 Activity monitoring</li>
+            </ul>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Auto-redirect using JavaScript
+    st.markdown("""
+    <script>
+        setTimeout(function() {
+            window.open('http://localhost:8503', '_blank');
+        }, 2000);
+    </script>
+    """, unsafe_allow_html=True)
+    
+    # Manual redirect button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        if st.button("🚀 Open Breach Response Center", type="primary", use_container_width=True, key="redirect_brc_button"):
+            st.markdown("""
+            <div style="text-align: center; padding: 1rem; margin: 1rem 0;">
+                <h3>🚨 Breach Response Center</h3>
+                <p>Click the link below to open the dedicated dashboard:</p>
+                <a href="http://localhost:8503" target="_blank" 
+                   style="background: linear-gradient(120deg, #06b6d4, #22c55e); 
+                          color: #020617; padding: 15px 30px; text-decoration: none; 
+                          border-radius: 8px; font-weight: bold; display: inline-block;
+                          margin: 10px 0;">
+                    � Open Breach Response Center
+                </a>
+                <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">
+                    Opens in new tab at http://localhost:8503
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Status check
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🔍 Quick Status")
+        try:
+            # Try to get basic stats without full context
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+            
+            engine = create_engine(DATABASE_URL)
+            db_session = sessionmaker(bind=engine)()
+            
+            breached_count = db_session.query(Breach).distinct(Breach.email).count()
+            pending_count = db_session.query(RemediationAction).filter_by(status='pending').count()
+            
+            st.metric("Breached Accounts", breached_count)
+            st.metric("Pending Actions", pending_count)
+            
+            db_session.close()
+        except Exception as e:
+            st.warning("Unable to fetch status - dashboard may be starting up")
+    
+    with col2:
+        st.subheader("📞 Support")
+        st.write("""
+        **Need Help?**
+        
+        - Ensure the Breach Response Center is running on port 8503
+        - Check that the database is accessible
+        - Contact support if issues persist
+        
+        **Manual Start:**
+        ```bash
+        streamlit run breach_response_dashboard.py --server.port 8503
+        ```
+        """)
+    
+    # Return to main app option
+    st.divider()
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        if st.button("🏠 Return to Main Dashboard", use_container_width=True):
+            st.session_state.mode = "Individual"
+            st.rerun()
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -520,7 +652,7 @@ def register_form(SessionLocal):
     with st.form("register_form"):
         email = st.text_input("Email", key="reg_email")
         password = st.text_input("Password", type="password", key="reg_password")
-        submitted = st.form_submit_button("Create account")
+        submitted = st.form_submit_button("Create account", key="create_account_button")
         if submitted:
             email_clean = (email or "").strip().lower()
             password_clean = (password or "").strip()
@@ -557,12 +689,12 @@ def login_form(SessionLocal):
         password = st.text_input("Password", type="password", key="login_password")
         access_mode = st.radio(
             "Login as",
-            ["Individual", "Enterprise"],
+            ["Individual", "Enterprise", "Breach Response Center"],
             index=0,
             horizontal=True,
             key="login_mode_choice",
         )
-        submitted = st.form_submit_button("Login")
+        submitted = st.form_submit_button("Login", key="login_button")
 
     if submitted:
         email_clean = (email or "").strip().lower()
@@ -586,7 +718,13 @@ def login_form(SessionLocal):
 
 
 def logout_button():
-    if st.button("Logout"):
+    if st.button("Logout", key="main_logout_button"):
+        st.session_state.user_id = None
+        st.rerun()
+
+
+def enterprise_logout_button():
+    if st.button("Logout", key="enterprise_logout_button"):
         st.session_state.user_id = None
         st.rerun()
 
@@ -607,6 +745,30 @@ def render_dashboard(SessionLocal):
                 unsafe_allow_html=True,
             )
             st.divider()
+            
+            # Breach Response Center Quick Access
+            st.subheader("🚨 Quick Actions")
+            if st.button("🚨 Breach Response Center", type="secondary", use_container_width=True, key="individual_brc_button"):
+                st.success("📂 Opening Breach Response Center...")
+                st.markdown("""
+                <div style="text-align: center; padding: 1rem; margin: 1rem 0;">
+                    <h3>🚨 Breach Response Center</h3>
+                    <p>Click the link below to open the dedicated dashboard:</p>
+                    <a href="http://localhost:8503" target="_blank" 
+                       style="background: linear-gradient(120deg, #06b6d4, #22c55e); 
+                              color: #020617; padding: 15px 30px; text-decoration: none; 
+                              border-radius: 8px; font-weight: bold; display: inline-block;
+                              margin: 10px 0;">
+                        � Open Breach Response Center
+                    </a>
+                    <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">
+                        Opens in new tab at http://localhost:8503
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.divider()
+            
             st.subheader("Live scanning")
             st.session_state.auto_scan_enabled = st.toggle(
                 "Auto-scan monitored emails",
@@ -623,6 +785,9 @@ def render_dashboard(SessionLocal):
 
         if st.session_state.mode == "Enterprise":
             return render_enterprise_dashboard(SessionLocal, user)
+        
+        if st.session_state.mode == "Breach Response Center":
+            return show_breach_response_redirect()
 
         st.title("Dark Web Breach Monitor (Individual)")
         st.caption("Personal monitoring for your own emails.")
@@ -747,7 +912,7 @@ def render_dashboard(SessionLocal):
 
             with st.form("add_email_form"):
                 new_email = st.text_input("Add email to monitor")
-                submitted = st.form_submit_button("Add")
+                submitted = st.form_submit_button("Add", key="add_email_button")
                 if submitted:
                     email_clean = (new_email or "").strip().lower()
                     if not email_clean:
@@ -780,7 +945,7 @@ def render_dashboard(SessionLocal):
                     type="password",
                     help="Password is checked securely against the Have I Been Pwned Pwned Passwords API using SHA-1 k-anonymity. It is never stored.",
                 )
-                submitted_pwd = st.form_submit_button("Check password")
+                submitted_pwd = st.form_submit_button("Check password", key="check_password_button")
                 if submitted_pwd:
                     pwned, count = check_password_pwned(pwd)
                     if pwned:
@@ -797,7 +962,7 @@ def render_dashboard(SessionLocal):
                     "Check if an email was found in breaches",
                     help="This performs an instant lookup using the backend email breach function (LeakCheck).",
                 )
-                submitted_email = st.form_submit_button("Check email")
+                submitted_email = st.form_submit_button("Check email", key="check_email_button")
                 if submitted_email:
                     email_clean = (quick_email or "").strip().lower()
                     if not email_clean:
@@ -830,16 +995,17 @@ def render_dashboard(SessionLocal):
 
             st.markdown("---")
 
-            if st.button("Download Breach Report (PDF)"):
+            if st.button("Download Breach Report (PDF)", key="download_report_button"):
                 buffer = generate_breach_report(user, breaches, risk_level)
                 st.download_button(
                     label="Download PDF",
                     data=buffer,
                     file_name=f"breach_report_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf",
                     mime="application/pdf",
+                    key="download_pdf_button"
                 )
 
-            if st.button("Run Manual Scan Now"):
+            if st.button("Run Manual Scan Now", key="run_manual_scan_button"):
                 for m in monitored_emails:
                     live = _live_breach_dicts_for_email(m.email)
                     breach_dicts = live if live is not None else simulate_breach_check(m.email)
@@ -912,6 +1078,45 @@ def render_dashboard(SessionLocal):
 def render_enterprise_dashboard(SessionLocal, user: User):
     db_sess = SessionLocal()
     try:
+        # Add sidebar for Enterprise dashboard
+        with st.sidebar:
+            st.subheader("🏢 Enterprise Mode")
+            st.markdown(
+                f"**{user.email}**",
+                unsafe_allow_html=True,
+            )
+            st.divider()
+            
+            # Breach Response Center Quick Access
+            st.subheader("🚨 Quick Actions")
+            if st.button("🚨 Breach Response Center", type="secondary", use_container_width=True, key="enterprise_brc_button"):
+                st.success("📂 Opening Breach Response Center...")
+                st.markdown("""
+                <div style="text-align: center; padding: 1rem; margin: 1rem 0;">
+                    <h3>🚨 Breach Response Center</h3>
+                    <p>Click the link below to open the dedicated dashboard:</p>
+                    <a href="http://localhost:8503" target="_blank" 
+                       style="background: linear-gradient(120deg, #06b6d4, #22c55e); 
+                              color: #020617; padding: 15px 30px; text-decoration: none; 
+                              border-radius: 8px; font-weight: bold; display: inline-block;
+                              margin: 10px 0;">
+                        � Open Breach Response Center
+                    </a>
+                    <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">
+                        Opens in new tab at http://localhost:8503
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            st.subheader("Organization Management")
+            st.caption("Manage your organization's security posture")
+            st.divider()
+            
+            st.caption(f"Admin: {user.email}")
+            enterprise_logout_button()
+
         st.title("Dark Web Breach Monitor (Enterprise)")
         st.caption("Monitor many employee emails and compute one combined organization risk score.")
 
@@ -925,7 +1130,7 @@ def render_enterprise_dashboard(SessionLocal, user: User):
         with st.expander("Create organization", expanded=(len(orgs) == 0)):
             with st.form("create_org_form"):
                 org_name = st.text_input("Organization name", placeholder="DemoCorp")
-                submitted = st.form_submit_button("Create")
+                submitted = st.form_submit_button("Create", key="create_org_button")
                 if submitted:
                     name_clean = (org_name or "").strip()
                     if not name_clean:
@@ -1043,7 +1248,7 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             if active_org:
                 with st.form("add_employee_email_form"):
                     new_email = st.text_input("Add employee email", placeholder="admin@democorp.com")
-                    submitted = st.form_submit_button("Add")
+                    submitted = st.form_submit_button("Add", key="add_employee_button")
                     if submitted:
                         email_clean = (new_email or "").strip().lower()
                         if not email_clean:
@@ -1064,7 +1269,7 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             else:
                 st.error("Organization not selected or invalid. Please select an organization.")
 
-            if st.button("Run Enterprise Scan Now"):
+            if st.button("Run Enterprise Scan Now", key="run_enterprise_scan_button"):
                 new_breach_found = False
                 for e in employees:
                     live = _live_breach_dicts_for_email(e.email)
@@ -1103,7 +1308,7 @@ def render_enterprise_dashboard(SessionLocal, user: User):
 
             # Debug: Force live scan and show results
             with st.expander("Debug: Force live breach check (no persistence)"):
-                if st.button("Check first employee email now"):
+                if st.button("Check first employee email now", key="check_employee_email_button"):
                     if employees:
                         test_email = employees[0].email
                         with st.spinner(f"Checking {test_email} via backend..."):
@@ -1268,13 +1473,13 @@ def main():
         if not st.session_state.show_register:
             login_form(SessionLocal)
             st.markdown("---")
-            if st.button("New user? Register"):
+            if st.button("New user? Register", key="new_user_button"):
                 st.session_state.show_register = True
                 st.rerun()
         else:
             register_form(SessionLocal)
             st.markdown("---")
-            if st.button("Back to login"):
+            if st.button("Back to login", key="back_to_login_button"):
                 st.session_state.show_register = False
                 st.rerun()
 

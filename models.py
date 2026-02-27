@@ -54,3 +54,55 @@ class OrgBreach(db.Model):
     severity = db.Column(db.String(50), nullable=False)
     detected_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+
+class RemediationAction(db.Model):
+    __tablename__ = 'remediation_actions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False)
+    breach_id = db.Column(db.Integer, db.ForeignKey('breach.id'), nullable=True)
+    
+    # Action details
+    action_type = db.Column(db.String(100), nullable=False)  # 'password_change', 'enable_2fa', etc.
+    description = db.Column(db.String(500), nullable=False)  # Human-readable description
+    priority = db.Column(db.Integer, default=1)  # 1=high, 2=medium, 3=low
+    
+    # Status tracking
+    status = db.Column(db.String(50), default='pending')  # 'pending', 'completed', 'ignored'
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    
+    def __repr__(self):
+        return f"<RemediationAction {self.email} - {self.action_type}>"
+
+
+class ActivityLog(db.Model):
+    __tablename__ = 'activity_log'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    email = db.Column(db.String(255), nullable=True)
+    action = db.Column(db.String(100), nullable=False)  # 'breach_detected', 'action_completed', etc.
+    message = db.Column(db.Text, nullable=False)
+    severity = db.Column(db.String(50), default='info')  # 'info', 'warning', 'critical'
+    
+    def __repr__(self):
+        return f"<ActivityLog {self.timestamp} - {self.action}>"
+
+
+class EmailPreview(db.Model):
+    __tablename__ = 'email_previews'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    recipient = db.Column(db.String(255), nullable=False)
+    subject = db.Column(db.String(500), nullable=False)
+    html_content = db.Column(db.Text, nullable=True)
+    risk_score = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(50), default='sent')
+    
+    def __repr__(self):
+        return f"<EmailPreview to {self.recipient}>"
+
