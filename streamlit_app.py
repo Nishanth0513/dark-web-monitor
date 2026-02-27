@@ -23,6 +23,294 @@ DEFAULT_DB_PATH = os.path.join(INSTANCE_DIR, "darkweb_monitor.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
 
 
+LANDING_CSS = """
+<style>
+/* Global dark cyber theme */
+[data-testid="stAppViewContainer"], body, .main {
+  background: radial-gradient(circle at top, #0b1020 0, #050816 45%, #020309 100%) !important;
+  color: #f9fafb;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', monospace;
+}
+
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #050816 0, #020309 100%) !important;
+  border-right: 1px solid rgba(15,23,42,0.9);
+}
+
+[data-testid="stHeader"] {
+  background: transparent !important;
+}
+
+/* Generic cards/containers */
+.stTabs [data-baseweb="tab-list"] {
+  gap: 1.2rem;
+}
+
+.stTabs [data-baseweb="tab"] {
+  padding: 0.4rem 0.2rem;
+}
+
+/* Form inputs */
+input, textarea, select {
+  background-color: rgba(15,23,42,0.95) !important;
+  color: #e5e7eb !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(148,163,184,0.5) !important;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: none !important;
+  border-color: rgba(56,189,248,0.9) !important;
+  box-shadow: 0 0 0 1px rgba(56,189,248,0.6) !important;
+}
+
+label {
+  color: #e5e7eb !important;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #e5e7eb !important;
+}
+
+/* Ensure all inline text in main content is light (fixes radio labels too) */
+.block-container span {
+  color: #e5e7eb !important;
+}
+
+
+
+/* Alerts */
+[data-testid="stAlert"] {
+  background-color: rgba(15,23,42,0.98) !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(248,250,252,0.12) !important;
+}
+
+/* Main app buttons (all visible buttons) */
+button, .stButton > button {
+  border-radius: 999px !important;
+  background: linear-gradient(120deg, #06b6d4, #22c55e) !important;
+  border: 1px solid rgba(34,197,94,0.9) !important;
+  color: #020617 !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  box-shadow:
+    0 0 10px rgba(34,197,94,0.7),
+    0 0 20px rgba(8,145,178,0.9);
+}
+
+.stButton > button:hover, button:hover {
+  filter: brightness(1.12);
+}
+
+.stButton > button:disabled {
+  background: linear-gradient(120deg, #06b6d4, #22c55e) !important;
+  border: 1px solid rgba(34,197,94,0.7) !important;
+  color: #ffffff !important;
+  opacity: 0.65 !important;
+  box-shadow:
+    0 0 8px rgba(34,197,94,0.4),
+    0 0 14px rgba(8,145,178,0.6) !important;
+}
+
+/* Explicit styling for radio button labels (Individual / Enterprise selector) */
+.stRadio label {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+.stRadio div[role="radiogroup"] * {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+/* Metrics */
+[data-testid="stMetricLabel"] {
+  color: #9ca3c7 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.7rem;
+}
+
+[data-testid="stMetricValue"] {
+  font-size: 1.5rem;
+  color: #e5e7eb !important;
+}
+
+/* Tables / dataframes */
+.stDataFrame, [data-testid="stTable"] {
+  background-color: rgba(15,23,42,0.95) !important;
+  border-radius: 10px;
+  border: 1px solid rgba(30,64,175,0.7);
+  box-shadow: 0 0 18px rgba(15,23,42,0.9);
+}
+
+/* Progress bar tweaks */
+.stProgress > div > div {
+  background: linear-gradient(90deg, #22c55e, #eab308, #f97316, #ef4444);
+}
+
+/* Top navigation */
+.dw-nav {
+  position: sticky;
+  top: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.2rem;
+  background: linear-gradient(90deg, rgba(15,23,42,0.98), rgba(15,23,42,0.9));
+  border-bottom: 1px solid rgba(31,41,55,0.9);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.7);
+}
+
+.dw-nav-left {
+  font-size: 0.85rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9ca3c7;
+}
+
+.dw-nav-brand {
+  color: #00ffcc;
+  font-weight: 600;
+}
+
+.dw-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+  font-size: 0.8rem;
+}
+
+.dw-nav-link {
+  color: #e5e7eb;
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.7rem;
+  position: relative;
+}
+
+.dw-nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #06b6d4, #22c55e);
+  transition: width 0.18s ease-out;
+}
+
+.dw-nav-link:hover::after {
+  width: 100%;
+}
+
+/* Hero landing layout */
+.dw-hero-wrap {
+  padding-top: 2.5rem;
+  padding-bottom: 1.5rem;
+}
+
+.dw-hero-title {
+  font-size: 3rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #00ffcc;
+  text-shadow:
+    0 0 12px rgba(0,255,204,0.7),
+    0 0 24px rgba(0,255,204,0.5);
+}
+
+.dw-hero-subtitle {
+  font-size: 1.1rem;
+  color: #a5b4fc;
+  margin-top: 0.4rem;
+}
+
+.dw-hero-tagline {
+  font-size: 0.85rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #9ca3c7;
+  margin-top: 1.2rem;
+}
+
+.dw-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.18rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(0,255,204,0.55);
+  background: rgba(15,23,42,0.8);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.dw-dot-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #ff0033;
+  box-shadow: 0 0 10px rgba(255,0,51,0.9);
+  animation: dw-pulse 1s ease-in-out infinite;
+}
+
+.dw-hero-metric-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #9ca3c7;
+}
+
+.dw-hero-metric-value {
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.dw-glass {
+  /* Hero right card wrapper – now transparent so box is not visible */
+  background: transparent;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.dw-glass:hover {
+  border-color: rgba(0,255,204,0.7);
+  box-shadow:
+    0 0 18px rgba(0,255,204,0.5),
+    0 0 32px rgba(0,255,204,0.35);
+  transform: translateY(-1px);
+  transition: all 0.18s ease-out;
+}
+
+.dw-attack-list li {
+  margin-bottom: 0.35rem;
+}
+
+.dw-login-heading {
+  font-size: 0.9rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #9ca3c7;
+  margin-bottom: 0.5rem;
+}
+
+@keyframes dw-pulse {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.8; }
+}
+</style>
+"""
+
+
 @st.cache_resource
 def get_engine_and_session():
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -259,24 +547,31 @@ def register_form(SessionLocal):
 
 def login_form(SessionLocal):
     st.subheader("Login")
-    with st.form("login_form"):
-        email = st.text_input("Email", key="login_email")
-        password = st.text_input("Password", type="password", key="login_password")
-        submitted = st.form_submit_button("Login")
-        if submitted:
-            email_clean = (email or "").strip().lower()
-            db_sess = SessionLocal()
-            try:
-                user = db_sess.execute(
-                    select(User).where(User.email == email_clean)
-                ).scalar_one_or_none()
-                if not user or not check_password_hash(user.password_hash, password):
-                    st.error("Invalid email or password.")
-                    return
-                st.session_state.user_id = user.id
-                st.rerun()
-            finally:
-                db_sess.close()
+    email = st.text_input("Email", key="login_email")
+    password = st.text_input("Password", type="password", key="login_password")
+    access_mode = st.radio(
+        "Login as",
+        ["Individual", "Enterprise"],
+        index=0,
+        horizontal=True,
+        key="login_mode_choice",
+    )
+    if st.button("Login", key="login_submit"):
+        email_clean = (email or "").strip().lower()
+        db_sess = SessionLocal()
+        try:
+            user = db_sess.execute(
+                select(User).where(User.email == email_clean)
+            ).scalar_one_or_none()
+            if not user or not check_password_hash(user.password_hash, password):
+                st.error("Invalid email or password.")
+                return
+            st.session_state.user_id = user.id
+            # Set dashboard mode based on selected access mode at login time
+            st.session_state.mode = "Individual" if access_mode == "Individual" else "Enterprise"
+            st.rerun()
+        finally:
+            db_sess.close()
 
 
 def logout_button():
@@ -295,11 +590,10 @@ def render_dashboard(SessionLocal):
             return
 
         with st.sidebar:
-            st.subheader("Mode")
-            st.session_state.mode = st.radio(
-                "Select dashboard mode",
-                ["Individual", "Enterprise"],
-                index=0 if st.session_state.mode == "Individual" else 1,
+            st.subheader("Access Mode")
+            st.markdown(
+                f"**{st.session_state.mode}**",
+                unsafe_allow_html=True,
             )
             st.divider()
             st.subheader("Live scanning")
@@ -419,6 +713,10 @@ def render_dashboard(SessionLocal):
 
         with left:
             st.subheader("Monitored Emails")
+            st.image(
+                "https://images.pexels.com/photos/5380642/pexels-photo-5380642.jpeg?auto=compress&cs=tinysrgb&w=800",
+                caption="Identity monitoring across leaked credential clusters.",
+            )
             if monitored_emails:
                 for m in monitored_emails:
                     label = m.email
@@ -795,6 +1093,10 @@ def render_enterprise_dashboard(SessionLocal, user: User):
 
         with right:
             st.subheader("Organization Breach History")
+            st.image(
+                "https://images.pexels.com/photos/5380648/pexels-photo-5380648.jpeg?auto=compress&cs=tinysrgb&w=800",
+                caption="Attack surface mapping across employee identities and access layers.",
+            )
             if org_breaches:
                 df = pd.DataFrame(
                     [
@@ -835,12 +1137,107 @@ def main():
         page_icon="🛡️",
         layout="wide",
     )
+    st.markdown(LANDING_CSS, unsafe_allow_html=True)
+
     init_db()
     ensure_default_state()
     _, SessionLocal = get_engine_and_session()
 
     if st.session_state.user_id is None:
-        st.title("Dark Web Breach Monitor")
+        # Top navigation bar
+        st.markdown(
+            """
+            <div class="dw-nav">
+              <div class="dw-nav-left">
+                <span class="dw-nav-brand">DARK WEB MONITOR</span>&nbsp;|&nbsp; Breach Intelligence
+              </div>
+              <div class="dw-nav-right">
+                <a href="#home" class="dw-nav-link">Home</a>
+                <a href="#about" class="dw-nav-link">About</a>
+                <a href="#login" class="dw-nav-link">Login</a>
+                <a href="#faq" class="dw-nav-link">FAQ</a>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Cyber landing hero (stacked vertically)
+        hero = st.container()
+        with hero:
+            st.markdown('<div id="home" class="dw-hero-wrap">', unsafe_allow_html=True)
+
+            # Title + tagline
+            st.markdown(
+                """
+                <div class="dw-hero-title">DARK WEB MONITOR</div>
+                <div class="dw-hero-subtitle">
+                  Real-Time Dark Web Breach Intelligence Console
+                </div>
+                <div class="dw-hero-tagline">
+                  DARK WEB • STEALER LOGS • CREDENTIAL DUMPS • LEAKED CORP DATA
+                </div>
+                <div style="margin-top:1rem;">
+                  <span class="dw-hero-badge">
+                    <span class="dw-dot-live"></span>
+                    LIVE DARK WEB MONITORING
+                  </span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Metrics row
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.markdown('<div class="dw-hero-metric-label">LEAKED IDENTITIES (SIM)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="dw-hero-metric-value">12,431</div>', unsafe_allow_html=True)
+            with m2:
+                st.markdown('<div class="dw-hero-metric-label">ACTIVE FEEDS</div>', unsafe_allow_html=True)
+                st.markdown('<div class="dw-hero-metric-value">27</div>', unsafe_allow_html=True)
+            with m3:
+                st.markdown('<div class="dw-hero-metric-label">CRITICAL CLUSTERS</div>', unsafe_allow_html=True)
+                st.markdown('<div class="dw-hero-metric-value">9</div>', unsafe_allow_html=True)
+
+            # Description block
+            st.markdown(
+                """
+                <div style="margin-top:1.4rem;font-size:0.9rem;color:#d1d5db;">
+                  This console continuously:
+                  <ul style="margin-top:0.35rem;">
+                    <li>Watches dark web forums, stealer logs and credential dumps for your identities.</li>
+                    <li>Maps exposed emails and passwords into individual and enterprise risk scores.</li>
+                    <li>Maintains a historical breach ledger so you can prove what was leaked and when.</li>
+                    <li>Surfaces tactical recommendations so teams can reset, rotate and lock down access fast.</li>
+                  </ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Full-width hero image + attack bullets
+            st.markdown('<div id="about" class="dw-glass">', unsafe_allow_html=True)
+            st.image(
+                "https://media.istockphoto.com/id/1144604245/photo/a-computer-system-hacked-warning.jpg?s=612x612&w=0&k=20&c=U45FHOm5rflXIRqmYByxlQANtdtycEdFZz2Vp5dgI8E=",
+                caption="Critical breach telemetry detected across dark web attack surfaces.",
+            )
+            st.markdown(
+                """
+                <ul class="dw-attack-list">
+                  <li>🧨 Ransomware crews trading initial access credentials</li>
+                  <li>🕶️ Stealer logs exposing corporate VPN & email accounts</li>
+                  <li>📦 Cloud snapshots & code repos surfacing in private dumps</li>
+                </ul>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown('<div id="login" class="dw-login-heading">Authenticate to access the live console</div>', unsafe_allow_html=True)
+
         if not st.session_state.show_register:
             login_form(SessionLocal)
             st.markdown("---")
@@ -853,6 +1250,26 @@ def main():
             if st.button("Back to login"):
                 st.session_state.show_register = False
                 st.rerun()
+
+        # Simple FAQ section
+        st.markdown('<div id="faq"></div>', unsafe_allow_html=True)
+        with st.expander("What does Dark Web Monitor actually do?"):
+            st.write(
+                "It continuously checks dark web breach sources (via your backend integrations) "
+                "for your monitored emails and identities, then turns those findings into risk scores "
+                "and a historical breach ledger."
+            )
+        with st.expander("What is the difference between Individual and Enterprise mode?"):
+            st.write(
+                "Individual mode focuses on a single user monitoring their own emails; "
+                "Enterprise mode lets an organization admin monitor many employee emails and see "
+                "one combined organization risk posture."
+            )
+        with st.expander("Does this store my passwords?"):
+            st.write(
+                "No. The password monitor uses the Have I Been Pwned Pwned Passwords API with SHA-1 "
+                "k-anonymity. Only the first 5 characters of the hash are sent, and nothing is stored."
+            )
     else:
         render_dashboard(SessionLocal)
 
