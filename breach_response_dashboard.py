@@ -192,8 +192,35 @@ def get_action_summary_local(db_session):
     
     return summary
 
+def calculate_risk_level(email: str, breaches, db_session):
+    """Calculate risk level for an email based on breach data"""
+    if not breaches:
+        return "low"
+    
+    # Count breaches by severity
+    high_severity_count = sum(1 for b in breaches if b.severity.lower() in ['high', 'critical'])
+    total_breaches = len(breaches)
+    
+    # Check for sensitive data exposure
+    sensitive_data_exposed = any(
+        'password' in b.data_exposed.lower() or 
+        'ssn' in b.data_exposed.lower() or 
+        'credit card' in b.data_exposed.lower() or
+        'financial' in b.data_exposed.lower()
+        for b in breaches
+    )
+    
+    # Determine risk level
+    if high_severity_count >= 2 or sensitive_data_exposed:
+        return "critical"
+    elif high_severity_count >= 1 or total_breaches >= 10:
+        return "high"
+    elif total_breaches >= 3:
+        return "medium"
+    else:
+        return "low"
+
 def get_breach_statistics_local(db_session):
-    """Get overall breach response statistics"""
     breached_emails = db_session.query(Breach).distinct(Breach.email).all()
     total_breached = len(set(b.email for b in breached_emails))
     
@@ -325,7 +352,97 @@ def show_breach_response_center():
         
         if not breached_emails:
             st.info("✅ No breached accounts found. All clear!")
-            return
+            st.divider()
+        
+        # Risk-based categorization section
+        st.subheader("🚨 Security Risk Classification")
+        
+        # Get all unique emails with their risk levels
+        risk_categories = {
+            'critical': [],
+            'high': [],
+            'medium': [],
+            'low': []
+        }
+        
+        for account in breached_emails:
+            email = account['email']
+            breaches = db_session.query(Breach).filter_by(email=email).all()
+            risk_level = calculate_risk_level(email, breaches, db_session)
+            risk_categories[risk_level].append({'email': email, 'breaches': breaches})
+        
+        # Display risk categories in separate columns
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown("""
+            <div style='background: linear-gradient(135deg, #dc2626, #991b1b); padding: 1rem; border-radius: 10px; text-align: center; color: white;'>
+                <h3 style='margin: 0; color: white;'>🚨 CRITICAL</h3>
+                <p style='margin: 0.5rem 0; font-size: 1.2rem; color: white;'>BLOCK</p>
+                <p style='margin: 0; font-size: 0.9rem; color: #fca5a5;'>Immediate isolation required</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            for account in risk_categories['critical']:
+                st.markdown(f"""
+                <div style='background: rgba(220, 38, 38, 0.1); border-left: 4px solid #dc2626; padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;'>
+                    <strong>{account['email']}</strong><br>
+                    <small>{len(account['breaches'])} breaches</small>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div style='background: linear-gradient(135deg, #f97316, #c2410c); padding: 1rem; border-radius: 10px; text-align: center; color: white;'>
+                <h3 style='margin: 0; color: white;'>⚠️ HIGH</h3>
+                <p style='margin: 0.5rem 0; font-size: 1.2rem; color: white;'>ISOLATION</p>
+                <p style='margin: 0; font-size: 0.9rem; color: #fed7aa;'>Enhanced monitoring needed</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            for account in risk_categories['high']:
+                st.markdown(f"""
+                <div style='background: rgba(249, 115, 22, 0.1); border-left: 4px solid #f97316; padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;'>
+                    <strong>{account['email']}</strong><br>
+                    <small>{len(account['breaches'])} breaches</small>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div style='background: linear-gradient(135deg, #eab308, #a16207); padding: 1rem; border-radius: 10px; text-align: center; color: white;'>
+                <h3 style='margin: 0; color: white;'>🔍 MEDIUM</h3>
+                <p style='margin: 0.5rem 0; font-size: 1.2rem; color: white;'>MONITORING</p>
+                <p style='margin: 0; font-size: 0.9rem; color: #fef3c7;'>Regular monitoring required</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            for account in risk_categories['medium']:
+                st.markdown(f"""
+                <div style='background: rgba(234, 179, 8, 0.1); border-left: 4px solid #eab308; padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;'>
+                    <strong>{account['email']}</strong><br>
+                    <small>{len(account['breaches'])} breaches</small>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown("""
+            <div style='background: linear-gradient(135deg, #22c55e, #16a34a); padding: 1rem; border-radius: 10px; text-align: center; color: white;'>
+                <h3 style='margin: 0; color: white;'>✅ LOW</h3>
+                <p style='margin: 0.5rem 0; font-size: 1.2rem; color: white;'>MONITORING</p>
+                <p style='margin: 0; font-size: 0.9rem; color: #dcfce7;'>Standard monitoring</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            for account in risk_categories['low']:
+                st.markdown(f"""
+                <div style='background: rgba(34, 197, 94, 0.1); border-left: 4px solid #22c55e; padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;'>
+                    <strong>{account['email']}</strong><br>
+                    <small>{len(account['breaches'])} breaches</small>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.divider()
         
         # Display accounts found in breaches
         st.subheader("🔴 Accounts Found in Breaches (Action Required)")
