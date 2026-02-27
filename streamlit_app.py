@@ -26,6 +26,7 @@ from breach_response import (
     save_remediation_actions
 )
 from breach_response_ui import show_breach_response_center
+from alert_service import send_combined_alert
 
 
 def show_breach_response_redirect():
@@ -88,7 +89,7 @@ def show_breach_response_redirect():
                           color: #020617; padding: 15px 30px; text-decoration: none; 
                           border-radius: 8px; font-weight: bold; display: inline-block;
                           margin: 10px 0;">
-                    � Open Breach Response Center
+                    🚀 Open Breach Response Center
                 </a>
                 <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">
                     Opens in new tab at http://localhost:8503
@@ -820,6 +821,42 @@ def render_dashboard(SessionLocal):
         primary_email = monitored_emails[0].email if monitored_emails else None
         score, risk_level, risk_percentage = calculate_risk(breaches, email=primary_email)
 
+        # Trigger alerts for HIGH (60+) or CRITICAL (85+) risk
+        if score >= 60 and primary_email:
+            # Prepare breach data for alert
+            breaches_data = [
+                {
+                    'breach_name': b.breach_name,
+                    'breach_date': b.breach_date.strftime('%Y-%m-%d'),
+                    'data_exposed': b.data_exposed
+                }
+                for b in breaches[:10]  # Send top 10 breaches
+            ]
+            
+            # Extract clean risk level (remove emoji and extra text)
+            clean_risk_level = risk_level.split("—")[0].strip()
+            
+            # Send combined SMS + Email alert
+            try:
+                alert_results = send_combined_alert(
+                    risk_level=clean_risk_level,
+                    score=score,
+                    email=primary_email,
+                    breach_count=total_breaches,
+                    breaches_list=breaches_data
+                )
+                
+                # Show alert status in sidebar
+                if alert_results.get('sms_sent') or alert_results.get('email_sent'):
+                    with st.sidebar:
+                        st.success("🔔 Alert sent!")
+                        if alert_results.get('sms_sent'):
+                            st.caption("✓ SMS sent")
+                        if alert_results.get('email_sent'):
+                            st.caption("✓ Email sent to shreyaburra17@gmail.com")
+            except Exception as e:
+                print(f"Alert service error: {e}")
+
         # Color coding for risk levels
         risk_colors = {
             "SAFE": "🟢",
@@ -1202,6 +1239,44 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             org_level = "LOW"
         else:
             org_level = "SAFE"
+
+        # Trigger alerts for HIGH (60+) or CRITICAL (85+) organization risk
+        if org_score >= 60 and employees:
+            # Find highest risk employee email for alert context
+            highest_risk_email = max(per_email_scores.items(), key=lambda x: x[1])[0] if per_email_scores else None
+            
+            if highest_risk_email:
+                # Prepare breach data for alert
+                employee_breaches = [b for b in org_breaches if b.email == highest_risk_email]
+                breaches_data = [
+                    {
+                        'breach_name': b.breach_name,
+                        'breach_date': b.breach_date.strftime('%Y-%m-%d'),
+                        'data_exposed': b.data_exposed
+                    }
+                    for b in employee_breaches[:10]  # Send top 10 breaches
+                ]
+                
+                # Send combined SMS + Email alert
+                try:
+                    alert_results = send_combined_alert(
+                        risk_level=org_level,
+                        score=org_score,
+                        email=f"{active_org.name} (highest risk: {highest_risk_email})",
+                        breach_count=len(org_breaches),
+                        breaches_list=breaches_data
+                    )
+                    
+                    # Show alert status in sidebar
+                    if alert_results.get('sms_sent') or alert_results.get('email_sent'):
+                        with st.sidebar:
+                            st.success("🔔 Enterprise Alert sent!")
+                            if alert_results.get('sms_sent'):
+                                st.caption("✓ SMS sent")
+                            if alert_results.get('email_sent'):
+                                st.caption("✓ Email sent to shreyaburra18@gmail.com")
+                except Exception as e:
+                    print(f"Alert service error: {e}")
 
         # Color coding
         risk_colors = {
