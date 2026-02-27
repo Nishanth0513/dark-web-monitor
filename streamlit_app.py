@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from models import db, User, MonitoredEmail, Breach, Organization, OrgEmail, OrgBreach
+from brain import fetch_email_breaches as fetch_live_email_breaches, pwned_password_count
 from risk_engine import calculate_risk
 from pdf_service import generate_breach_report
 from scheduler import simulate_breach_check
@@ -45,6 +46,10 @@ def ensure_default_state():
         st.session_state.user_id = None
     if "last_manual_scan" not in st.session_state:
         st.session_state.last_manual_scan = None
+    if "auto_scan_enabled" not in st.session_state:
+        st.session_state.auto_scan_enabled = True
+    if "last_auto_scan" not in st.session_state:
+        st.session_state.last_auto_scan = None
     if "show_register" not in st.session_state:
         st.session_state.show_register = False
     if "mode" not in st.session_state:
@@ -87,29 +92,139 @@ def check_password_pwned(password: str) -> tuple[bool, int]:
     if not password:
         return False, 0
 
-    sha1 = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
-    prefix, suffix = sha1[:5], sha1[5:]
-    url = f"https://api.pwnedpasswords.com/range/{prefix}"
-
-    try:
-        resp = requests.get(url, timeout=5)
-        if resp.status_code != 200:
-            return False, 0
-        for line in resp.text.splitlines():
-            parts = line.split(":")
-            if len(parts) != 2:
-                continue
-            hash_suffix, count_str = parts
-            if hash_suffix.strip().upper() == suffix:
-                try:
-                    count = int(count_str.strip())
-                except ValueError:
-                    count = 1
-                return True, count
-    except Exception:
+    count = pwned_password_count(password)
+    if count is None:
         return False, 0
+    return (count > 0), count
 
-    return False, 0
+
+def _parse_breach_date(date_str: str | None):
+    if not date_str:
+        return datetime.utcnow()
+    try:
+        if len(date_str) == 7 and date_str[4] == "-":
+            return datetime.strptime(date_str, "%Y-%m")
+        if len(date_str) == 10 and date_str[4] == "-" and date_str[7] == "-":
+            return datetime.strptime(date_str, "%Y-%m-%d")
+    except Exception:
+        return datetime.utcnow()
+    return datetime.utcnow()
+
+
+def _live_breach_dicts_for_email(email: str):
+    raw = fetch_live_email_breaches(email)
+    if raw is None:
+        return None
+    results = []
+    for b in raw:
+        breach_name = b.get("Name", "Unknown")
+        breach_date = _parse_breach_date(b.get("BreachDate"))
+        data_exposed = ", ".join(b.get("DataClasses", []) or ["Email"])
+        severity = "MEDIUM"
+        if "password" in data_exposed.lower():
+            severity = "HIGH"
+        results.append(
+            {
+                "breach_name": str(breach_name),
+                "breach_date": breach_date,
+                "data_exposed": str(data_exposed),
+                "severity": severity,
+            }
+        )
+    return results
+
+
+def _should_run_auto_scan() -> bool:
+    if not st.session_state.get("auto_scan_enabled", True):
+        return False
+    last = st.session_state.get("last_auto_scan")
+    if last is None:
+        return True
+    return (datetime.utcnow() - last).total_seconds() >= 300
+
+
+def _run_auto_scan_individual(db_sess, user: User, monitored_emails: list[MonitoredEmail]):
+    if not monitored_emails:
+        return
+    if not _should_run_auto_scan():
+        return
+
+    any_new = False
+    with st.spinner("Auto-scanning monitored emails..."):
+        for m in monitored_emails:
+            live = _live_breach_dicts_for_email(m.email)
+            if live is None:
+                continue
+            for sb in live:
+                existing = (
+                    db_sess.query(Breach)
+                    .filter(
+                        Breach.email == m.email,
+                        Breach.breach_name == sb["breach_name"],
+                    )
+                    .first()
+                )
+                if existing:
+                    continue
+                db_sess.add(
+                    Breach(
+                        email=m.email,
+                        breach_name=sb["breach_name"],
+                        breach_date=sb["breach_date"],
+                        data_exposed=sb["data_exposed"],
+                        severity=sb["severity"],
+                    )
+                )
+                any_new = True
+            m.last_checked = datetime.utcnow()
+
+    if any_new:
+        user.has_unseen_breaches = True
+    db_sess.commit()
+    st.session_state.last_auto_scan = datetime.utcnow()
+
+
+def _run_auto_scan_enterprise(db_sess, active_org: Organization, employees: list[OrgEmail]):
+    if not employees:
+        return
+    if not _should_run_auto_scan():
+        return
+
+    any_new = False
+    with st.spinner("Auto-scanning organization emails..."):
+        for e in employees:
+            live = _live_breach_dicts_for_email(e.email)
+            if live is None:
+                continue
+            for sb in live:
+                existing = (
+                    db_sess.query(OrgBreach)
+                    .filter(
+                        OrgBreach.org_id == active_org.id,
+                        OrgBreach.email == e.email,
+                        OrgBreach.breach_name == sb["breach_name"],
+                    )
+                    .first()
+                )
+                if existing:
+                    continue
+                db_sess.add(
+                    OrgBreach(
+                        org_id=active_org.id,
+                        email=e.email,
+                        breach_name=sb["breach_name"],
+                        breach_date=sb["breach_date"],
+                        data_exposed=sb["data_exposed"],
+                        severity=sb["severity"],
+                    )
+                )
+                any_new = True
+            e.last_checked = datetime.utcnow()
+
+    if any_new:
+        active_org.has_unseen_breaches = True
+    db_sess.commit()
+    st.session_state.last_auto_scan = datetime.utcnow()
 
 
 def register_form(SessionLocal):
@@ -187,6 +302,17 @@ def render_dashboard(SessionLocal):
                 index=0 if st.session_state.mode == "Individual" else 1,
             )
             st.divider()
+            st.subheader("Live scanning")
+            st.session_state.auto_scan_enabled = st.toggle(
+                "Auto-scan monitored emails",
+                value=st.session_state.auto_scan_enabled,
+            )
+            if st.session_state.last_auto_scan:
+                st.caption(
+                    "Last auto scan: "
+                    + st.session_state.last_auto_scan.strftime("%Y-%m-%d %H:%M UTC")
+                )
+            st.divider()
             st.caption(f"Signed in: {user.email}")
             logout_button()
 
@@ -201,6 +327,8 @@ def render_dashboard(SessionLocal):
             .filter(MonitoredEmail.user_id == user.id)
             .all()
         )
+
+        _run_auto_scan_individual(db_sess, user, monitored_emails)
         email_list = [m.email for m in monitored_emails] or ["__none__"]
 
         breaches = (
@@ -299,6 +427,43 @@ def render_dashboard(SessionLocal):
                     else:
                         st.success("Good news — this password was not found in the breach database snapshot.")
 
+            st.subheader("Email Monitor")
+            with st.form("quick_email_check_form"):
+                quick_email = st.text_input(
+                    "Check if an email was found in breaches",
+                    help="This performs an instant lookup using the backend email breach function (LeakCheck).",
+                )
+                submitted_email = st.form_submit_button("Check email")
+                if submitted_email:
+                    email_clean = (quick_email or "").strip().lower()
+                    if not email_clean:
+                        st.error("Email is required.")
+                    else:
+                        with st.spinner("Checking breaches..."):
+                            raw_breaches = fetch_live_email_breaches(email_clean)
+
+                        if raw_breaches is None:
+                            st.error("Email check failed (network/API issue). Try again.")
+                        elif len(raw_breaches) == 0:
+                            st.success("✅ No breaches found for this email.")
+                        else:
+                            st.warning(f"⚠️ Found in {len(raw_breaches)} breach sources.")
+                            preview = raw_breaches[:10]
+                            st.dataframe(
+                                pd.DataFrame(
+                                    [
+                                        {
+                                            "Breach": b.get("Name", "Unknown"),
+                                            "Date": b.get("BreachDate", "Unknown"),
+                                            "Source": b.get("Source", "Unknown"),
+                                        }
+                                        for b in preview
+                                    ]
+                                ),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
             st.markdown("---")
 
             if st.button("Download Breach Report (PDF)"):
@@ -312,8 +477,9 @@ def render_dashboard(SessionLocal):
 
             if st.button("Run Manual Scan Now"):
                 for m in monitored_emails:
-                    simulated = simulate_breach_check(m.email)
-                    for sb in simulated:
+                    live = _live_breach_dicts_for_email(m.email)
+                    breach_dicts = live if live is not None else simulate_breach_check(m.email)
+                    for sb in breach_dicts:
                         existing = (
                             db_sess.query(Breach)
                             .filter(
@@ -429,6 +595,8 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             .order_by(OrgEmail.email.asc())
             .all()
         )
+
+        _run_auto_scan_enterprise(db_sess, active_org, employees)
         employee_emails = [e.email for e in employees] or ["__none__"]
 
         org_breaches = (
@@ -475,32 +643,36 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             else:
                 st.info("No employee emails yet.")
 
-            with st.form("add_employee_email_form"):
-                new_email = st.text_input("Add employee email", placeholder="admin@democorp.com")
-                submitted = st.form_submit_button("Add")
-                if submitted:
-                    email_clean = (new_email or "").strip().lower()
-                    if not email_clean:
-                        st.error("Email is required.")
-                    else:
-                        exists = (
-                            db_sess.query(OrgEmail)
-                            .filter(OrgEmail.org_id == active_org.id, OrgEmail.email == email_clean)
-                            .first()
-                        )
-                        if exists:
-                            st.warning("This email is already in the organization list.")
+            if active_org:
+                with st.form("add_employee_email_form"):
+                    new_email = st.text_input("Add employee email", placeholder="admin@democorp.com")
+                    submitted = st.form_submit_button("Add")
+                    if submitted:
+                        email_clean = (new_email or "").strip().lower()
+                        if not email_clean:
+                            st.error("Email is required.")
                         else:
-                            db_sess.add(OrgEmail(org_id=active_org.id, email=email_clean))
-                            db_sess.commit()
-                            st.success("Employee email added.")
-                            st.rerun()
+                            exists = (
+                                db_sess.query(OrgEmail)
+                                .filter(OrgEmail.org_id == active_org.id, OrgEmail.email == email_clean)
+                                .first()
+                            )
+                            if exists:
+                                st.warning("This email is already in the organization list.")
+                            else:
+                                db_sess.add(OrgEmail(org_id=active_org.id, email=email_clean))
+                                db_sess.commit()
+                                st.success("Employee email added.")
+                                st.rerun()
+            else:
+                st.error("Organization not selected or invalid. Please select an organization.")
 
             if st.button("Run Enterprise Scan Now"):
                 new_breach_found = False
                 for e in employees:
-                    simulated = simulate_breach_check(e.email)
-                    for sb in simulated:
+                    live = _live_breach_dicts_for_email(e.email)
+                    breach_dicts = live if live is not None else simulate_breach_check(e.email)
+                    for sb in breach_dicts:
                         existing = (
                             db_sess.query(OrgBreach)
                             .filter(
@@ -531,6 +703,23 @@ def render_enterprise_dashboard(SessionLocal, user: User):
                 db_sess.commit()
                 st.success("Enterprise scan completed.")
                 st.rerun()
+
+            # Debug: Force live scan and show results
+            with st.expander("Debug: Force live breach check (no persistence)"):
+                if st.button("Check first employee email now"):
+                    if employees:
+                        test_email = employees[0].email
+                        with st.spinner(f"Checking {test_email} via backend..."):
+                            result = fetch_live_email_breaches(test_email)
+                        if result is None:
+                            st.error("Backend returned None (network/API error)")
+                        elif len(result) == 0:
+                            st.success("No breaches found for this email via backend.")
+                        else:
+                            st.warning(f"Found {len(result)} breach entries via backend.")
+                            st.json(result[:5])  # Show first 5 entries
+                    else:
+                        st.info("No employee emails to test.")
 
         with right:
             st.subheader("Organization Breach History")
