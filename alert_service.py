@@ -11,8 +11,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from twilio.rest import Client
 
-# Load environment variables
-load_dotenv()
+# Force reload environment variables (important for Streamlit)
+load_dotenv(override=True)
 
 # Twilio configuration
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")

@@ -657,7 +657,14 @@ def render_dashboard(SessionLocal):
         score, risk_level, risk_percentage = calculate_risk(breaches, email=primary_email)
 
         # Trigger alerts for HIGH (60+) or CRITICAL (85+) risk
-        if score >= 60 and primary_email:
+        print(f"🔍 Dashboard Alert Check:")
+        print(f"   Risk Score: {score}")
+        print(f"   Primary Email: {primary_email}")
+        print(f"   Total Breaches: {total_breaches}")
+        print(f"   Alert Threshold: 60")
+        
+        if score >= 60 and primary_email:  # Production threshold
+            print(f"🚨 Triggering alerts for {risk_level} risk (score: {score})")
             # Prepare breach data for alert
             breaches_data = [
                 {
@@ -681,6 +688,8 @@ def render_dashboard(SessionLocal):
                     breaches_list=breaches_data
                 )
                 
+                print(f"📧 Alert Results: {alert_results}")
+                
                 # Show alert status in sidebar
                 if alert_results.get('sms_sent') or alert_results.get('email_sent'):
                     with st.sidebar:
@@ -688,9 +697,13 @@ def render_dashboard(SessionLocal):
                         if alert_results.get('sms_sent'):
                             st.caption("✓ SMS sent")
                         if alert_results.get('email_sent'):
-                            st.caption("✓ Email sent to shreyaburra17@gmail.com")
+                            st.caption("✓ Email sent to shreyaburra18@gmail.com")
             except Exception as e:
-                print(f"Alert service error: {e}")
+                print(f"❌ Alert service error: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"ℹ️ No alerts triggered (score {score} < 60 or no primary email)")
 
         # Color coding for risk levels
         risk_colors = {
@@ -761,27 +774,44 @@ def render_dashboard(SessionLocal):
 
         with left:
             st.subheader("Monitored Emails")
-            st.image(
-                "https://images.pexels.com/photos/5380642/pexels-photo-5380642.jpeg?auto=compress&cs=tinysrgb&w=800",
-                caption="Identity monitoring across leaked credential clusters.",
-            )
             if monitored_emails:
-                for i, m in enumerate(monitored_emails):
-                    label = m.email
-                    if m.last_checked:
-                        label += f" (last: {m.last_checked.strftime('%Y-%m-%d %H:%M')})"
+                for m in monitored_emails:
+                    # Calculate risk score for each email
+                    email_breaches = [b for b in breaches if b.email == m.email]
+                    email_score, email_level, _ = calculate_risk(email_breaches, email=m.email)
+                    
+                    # Get emoji for risk level
+                    risk_colors = {
+                        "SAFE": "🟢",
+                        "LOW": "🟢", 
+                        "MEDIUM": "🟡",
+                        "HIGH": "🟠",
+                        "CRITICAL": "🔴",
+                    }
+                    clean_level = email_level.split("—")[0].strip()
+                    emoji = risk_colors.get(clean_level, "⚪")
+                    
                     col1, col2 = st.columns([4, 1])
                     with col1:
-                        st.write("- " + label)
+                        st.write(f"- {emoji} {m.email} — {email_score}/100 ({clean_level})")
                     with col2:
-                        if st.button("🗑️", key=f"delete_email_{m.id}"):
+                        if st.button("🗑️", key=f"delete_{m.id}"):
                             db_sess.delete(m)
                             db_sess.commit()
                             st.success(f"Removed {m.email} from monitoring.")
                             st.rerun()
+                    
+                    # Show last checked time
+                    if m.last_checked:
+                        st.caption(f"   Last checked: {m.last_checked.strftime('%Y-%m-%d %H:%M')}")
+                    else:
+                        st.caption("   Not checked yet")
             else:
                 st.info("No emails monitored yet.")
-
+            
+            st.markdown("---")
+            
+            # Add email form
             with st.form("add_email_form"):
                 new_email = st.text_input("Add email to monitor")
                 submitted = st.form_submit_button("Add")
@@ -861,7 +891,7 @@ def render_dashboard(SessionLocal):
                                         for b in preview
                                     ]
                                 ),
-                                use_container_width=True,
+                                width='stretch',
                                 hide_index=True,
                             )
 
@@ -923,13 +953,12 @@ def render_dashboard(SessionLocal):
                         for b in breaches
                     ]
                 )
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
 
                 severity_counts = df["Severity"].value_counts().reset_index()
                 severity_counts.columns = ["Severity", "Count"]
                 st.bar_chart(
                     severity_counts.set_index("Severity"),
-                    use_container_width=True,
                 )
             else:
                 st.info("No breach data yet.")
@@ -1213,12 +1242,12 @@ def render_enterprise_dashboard(SessionLocal, user: User):
                         for b in org_breaches
                     ]
                 )
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
 
                 # breaches per email chart
                 counts = df["Email"].value_counts().reset_index()
                 counts.columns = ["Email", "Breaches"]
-                st.bar_chart(counts.set_index("Email"), use_container_width=True)
+                st.bar_chart(counts.set_index("Email"))
             else:
                 st.info("No enterprise breach data yet.")
 
