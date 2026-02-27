@@ -523,7 +523,8 @@ def register_form(SessionLocal):
         submitted = st.form_submit_button("Create account")
         if submitted:
             email_clean = (email or "").strip().lower()
-            if not email_clean or not password:
+            password_clean = (password or "").strip()
+            if not email_clean or not password_clean:
                 st.error("Email and password are required.")
                 return
             db_sess = SessionLocal()
@@ -536,38 +537,48 @@ def register_form(SessionLocal):
                     return
                 user = User(
                     email=email_clean,
-                    password_hash=generate_password_hash(password),
+                    password_hash=generate_password_hash(password_clean),
                 )
                 db_sess.add(user)
                 db_sess.commit()
                 st.success("Registration successful. Please log in.")
+                st.session_state.show_register = False
+                st.session_state.login_email = email_clean
+                st.session_state.login_password = ""
+                st.rerun()
             finally:
                 db_sess.close()
 
 
 def login_form(SessionLocal):
     st.subheader("Login")
-    email = st.text_input("Email", key="login_email")
-    password = st.text_input("Password", type="password", key="login_password")
-    access_mode = st.radio(
-        "Login as",
-        ["Individual", "Enterprise"],
-        index=0,
-        horizontal=True,
-        key="login_mode_choice",
-    )
-    if st.button("Login", key="login_submit"):
+    with st.form("login_form"):
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        access_mode = st.radio(
+            "Login as",
+            ["Individual", "Enterprise"],
+            index=0,
+            horizontal=True,
+            key="login_mode_choice",
+        )
+        submitted = st.form_submit_button("Login")
+
+    if submitted:
         email_clean = (email or "").strip().lower()
+        password_clean = (password or "").strip()
+        if not email_clean or not password_clean:
+            st.error("Email and password are required.")
+            return
         db_sess = SessionLocal()
         try:
             user = db_sess.execute(
                 select(User).where(User.email == email_clean)
             ).scalar_one_or_none()
-            if not user or not check_password_hash(user.password_hash, password):
+            if not user or not check_password_hash(user.password_hash, password_clean):
                 st.error("Invalid email or password.")
                 return
             st.session_state.user_id = user.id
-            # Set dashboard mode based on selected access mode at login time
             st.session_state.mode = "Individual" if access_mode == "Individual" else "Enterprise"
             st.rerun()
         finally:
@@ -718,11 +729,19 @@ def render_dashboard(SessionLocal):
                 caption="Identity monitoring across leaked credential clusters.",
             )
             if monitored_emails:
-                for m in monitored_emails:
+                for i, m in enumerate(monitored_emails):
                     label = m.email
                     if m.last_checked:
                         label += f" (last: {m.last_checked.strftime('%Y-%m-%d %H:%M')})"
-                    st.write("- " + label)
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.write("- " + label)
+                    with col2:
+                        if st.button("🗑️", key=f"delete_email_{m.id}"):
+                            db_sess.delete(m)
+                            db_sess.commit()
+                            st.success(f"Removed {m.email} from monitoring.")
+                            st.rerun()
             else:
                 st.info("No emails monitored yet.")
 
@@ -1009,7 +1028,15 @@ def render_enterprise_dashboard(SessionLocal, user: User):
                     score = per_email_scores.get(e.email, 0)
                     lvl = per_email_levels.get(e.email, "SAFE")
                     emoji = risk_colors.get(lvl, "⚪")
-                    st.write(f"- {emoji} {e.email} — {score}/100 ({lvl})")
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.write(f"- {emoji} {e.email} — {score}/100 ({lvl})")
+                    with col2:
+                        if st.button("🗑️", key=f"delete_employee_{e.id}"):
+                            db_sess.delete(e)
+                            db_sess.commit()
+                            st.success(f"Removed {e.email} from organization.")
+                            st.rerun()
             else:
                 st.info("No employee emails yet.")
 
