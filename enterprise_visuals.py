@@ -11,7 +11,9 @@ def render_enterprise_visuals(db_sess, active_org, employees, org_breaches):
     """
     Renders the Mandatory Visual Intelligence Modules for Enterprise Mode.
     """
-    remediation_tasks = db_sess.query(RemediationAction).all() # Simplification for demo
+    # Filter remediation tasks only for this organization's emails
+    employee_emails = [e.email for e in employees]
+    remediation_tasks = db_sess.query(RemediationAction).filter(RemediationAction.email.in_(employee_emails)).all()
     
     # 1. Executive Command Panel
     eri_data = calculate_eri(employees, org_breaches, remediation_tasks)

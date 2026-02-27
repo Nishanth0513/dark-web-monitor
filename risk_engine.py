@@ -41,7 +41,7 @@ def _score_source_category(breach_name: str) -> int:
     for keywords, points, _ in SOURCE_CATEGORIES:
         if any(kw in name_lower for kw in keywords):
             return points
-    return 15
+    return 5
 
 
 def _score_data_types(data_exposed: str) -> int:
@@ -139,7 +139,11 @@ def calculate_risk(
     pwned_count: Optional[int] = None,
     role: str = "Employee"
 ) -> Tuple[int, str, bool]:
-    """Calculate risk score for multiple breaches. Takes highest score (MAX model)."""
+    """
+    Calculate risk score for multiple breaches using a Compound-MAX model.
+    It takes the worst breach as a base, then adds an amplification factor 
+    based on the total number of breaches.
+    """
     
     if not breaches:
         return 0, "SAFE", False
@@ -158,13 +162,26 @@ def calculate_risk(
             return 100, "CRITICAL – INTERNAL LEAK", True
         max_score = max(max_score, score)
     
-    # Map score to risk level
+    # Factor 7: Compound Exposure (Multi-breach amplification)
+    # If someone is in 3 breaches, add 5 points. If 5+, add 10 points.
+    breach_count = len(breaches)
+    if breach_count >= 10:
+        max_score += 15
+    elif breach_count >= 5:
+        max_score += 10
+    elif breach_count >= 3:
+        max_score += 5
+    
+    # Cap at 100
+    max_score = min(100, max_score)
+    
+    # Map score to risk level (Synchronized with BRC Classification)
     if max_score >= 85:
         level = "CRITICAL"
     elif max_score >= 60:
         level = "HIGH"
     elif max_score >= 35:
-        level = "ELEVATED"
+        level = "MEDIUM"
     elif max_score >= 1:
         level = "LOW"
     else:

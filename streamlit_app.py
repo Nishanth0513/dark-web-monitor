@@ -26,48 +26,16 @@ from breach_response import (
     get_recent_activities,
     save_remediation_actions
 )
-from breach_response_ui import show_breach_response_center
+from breach_response_ui import show_breach_response_center as brc_ui_main
 from alert_service import send_combined_alert
 
 
-def show_breach_response_redirect():
+def show_breach_response_redirect(db_sess):
     """
     Show Breach Response Center dashboard directly (no login required)
     """
-    
-    # Import and run the Breach Response Center directly
-    try:
-        # Import the main function from breach_response_dashboard
-        import sys
-        import os
-        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        
-        from breach_response_dashboard import main as brc_main
-        
-        # Set up a dummy session for BRC
-        if not hasattr(st.session_state, 'user_id'):
-            st.session_state.user_id = 1
-        if not hasattr(st.session_state, 'mode'):
-            st.session_state.mode = "Breach Response Center"
-            
-        # Run the BRC dashboard
-        brc_main()
-        
-    except Exception as e:
-        st.error(f"Error loading Breach Response Center: {e}")
-        st.info("Please run the Breach Response Center separately:")
-        st.code("streamlit run breach_response_dashboard.py --server.port 8503")
-        
-        # Show helpful info
-        st.markdown("---")
-        st.markdown("### 🚨 Breach Response Center Features:")
-        st.markdown("""
-        - **Breach Management**: Track and manage security breaches
-        - **Remediation Actions**: Monitor and complete security tasks
-        - **Activity Logging**: Track all security-related activities
-        - **Email Previews**: View alert emails before sending
-        - **Risk Analytics**: Analyze breach patterns and trends
-        """)
+    from breach_response_ui import show_breach_response_center
+    show_breach_response_center(db_session=db_sess)
 
 
 def login_form(SessionLocal):
@@ -89,7 +57,12 @@ def login_form(SessionLocal):
                 st.error("Invalid email or password.")
                 return
             st.session_state.user_id = user.id
-            st.session_state.mode = "Individual" if access_mode == "Individual" else "Enterprise"
+            if access_mode == "Individual":
+                st.session_state.mode = "Individual"
+            elif access_mode == "Enterprise":
+                st.session_state.mode = "Enterprise"
+            else:
+                st.session_state.mode = "Breach Response Center"
             st.rerun()
         finally:
             db_sess.close()
@@ -576,6 +549,15 @@ def _run_auto_scan_enterprise(db_sess, active_org: Organization, employees: list
             if live is None:
                 continue
             for sb in live:
+                # Calculate score for this breach
+                from models import Breach as BaseBreach
+                mock_b = BaseBreach(
+                    breach_name=sb["breach_name"],
+                    breach_date=sb["breach_date"],
+                    data_exposed=sb["data_exposed"]
+                )
+                score, level, is_canary = calculate_risk([mock_b], email=e.email, role=e.role)
+
                 existing = (
                     db_sess.query(OrgBreach)
                     .filter(
@@ -586,6 +568,8 @@ def _run_auto_scan_enterprise(db_sess, active_org: Organization, employees: list
                     .first()
                 )
                 if existing:
+                    # Update score if needed
+                    existing.score = score
                     continue
                 db_sess.add(
                     OrgBreach(
@@ -595,6 +579,8 @@ def _run_auto_scan_enterprise(db_sess, active_org: Organization, employees: list
                         breach_date=sb["breach_date"],
                         data_exposed=sb["data_exposed"],
                         severity=sb["severity"],
+                        score=score,
+                        is_canary=is_canary
                     )
                 )
                 any_new = True
@@ -670,7 +656,12 @@ def login_form(SessionLocal):
                 st.error("Invalid email or password.")
                 return
             st.session_state.user_id = user.id
-            st.session_state.mode = "Individual" if access_mode == "Individual" else "Enterprise"
+            if access_mode == "Individual":
+                st.session_state.mode = "Individual"
+            elif access_mode == "Enterprise":
+                st.session_state.mode = "Enterprise"
+            else:
+                st.session_state.mode = "Breach Response Center"
             st.rerun()
         finally:
             db_sess.close()
@@ -697,6 +688,12 @@ def render_dashboard(SessionLocal):
             st.rerun()
             return
 
+        if st.session_state.mode == "Breach Response Center":
+            # Pass the SessionLocal factory so it can create its own clean sessions
+            from breach_response_ui import show_breach_response_center
+            show_breach_response_center(db_session=db_sess, user_id=st.session_state.user_id)
+            return
+
         with st.sidebar:
             st.subheader("Access Mode")
             st.markdown(
@@ -708,23 +705,8 @@ def render_dashboard(SessionLocal):
             # Breach Response Center Quick Access
             st.subheader("🚨 Quick Actions")
             if st.button("🚨 Breach Response Center", type="secondary", use_container_width=True, key="individual_brc_button"):
-                st.success("📂 Opening Breach Response Center...")
-                st.markdown("""
-                <div style="text-align: center; padding: 1rem; margin: 1rem 0;">
-                    <h3>🚨 Breach Response Center</h3>
-                    <p>Click the link below to open the dedicated dashboard:</p>
-                    <a href="http://localhost:8503" target="_blank" 
-                       style="background: linear-gradient(120deg, #06b6d4, #22c55e); 
-                              color: #020617; padding: 15px 30px; text-decoration: none; 
-                              border-radius: 8px; font-weight: bold; display: inline-block;
-                              margin: 10px 0;">
-                        � Open Breach Response Center
-                    </a>
-                    <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">
-                        Opens in new tab at http://localhost:8503
-                    </p>
-                </div>
-                """, unsafe_allow_html=True)
+                st.session_state.mode = "Breach Response Center"
+                st.rerun()
             
             st.divider()
             
@@ -745,8 +727,11 @@ def render_dashboard(SessionLocal):
         if st.session_state.mode == "Enterprise":
             return render_enterprise_dashboard(SessionLocal, user)
         
+        # Ensure BRC can be reached from Individual mode too if the session state is switched
         if st.session_state.mode == "Breach Response Center":
-            return show_breach_response_redirect()
+            from breach_response_ui import show_breach_response_center
+            show_breach_response_center(db_session=db_sess, user_id=st.session_state.user_id)
+            return
 
         st.title("Dark Web Breach Monitor (Individual)")
         st.caption("Personal monitoring for your own emails.")
@@ -808,7 +793,8 @@ def render_dashboard(SessionLocal):
                     score=score,
                     email=primary_email,
                     breach_count=total_breaches,
-                    breaches_list=breaches_data
+                    breaches_list=breaches_data,
+                    db_session=db_sess
                 )
                 
                 print(f"📧 Alert Results: {alert_results}")
@@ -1117,23 +1103,8 @@ def render_enterprise_dashboard(SessionLocal, user: User):
             # Breach Response Center Quick Access
             st.subheader("🚨 Quick Actions")
             if st.button("🚨 Breach Response Center", type="secondary", use_container_width=True, key="enterprise_brc_button"):
-                st.success("📂 Opening Breach Response Center...")
-                st.markdown("""
-                <div style="text-align: center; padding: 1rem; margin: 1rem 0;">
-                    <h3>🚨 Breach Response Center</h3>
-                    <p>Click the link below to open the dedicated dashboard:</p>
-                    <a href="http://localhost:8503" target="_blank" 
-                       style="background: linear-gradient(120deg, #06b6d4, #22c55e); 
-                              color: #020617; padding: 15px 30px; text-decoration: none; 
-                              border-radius: 8px; font-weight: bold; display: inline-block;
-                              margin: 10px 0;">
-                        � Open Breach Response Center
-                    </a>
-                    <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">
-                        Opens in new tab at http://localhost:8503
-                    </p>
-                </div>
-                """, unsafe_allow_html=True)
+                st.session_state.mode = "Breach Response Center"
+                st.rerun()
             
             st.divider()
             
@@ -1197,10 +1168,10 @@ def render_enterprise_dashboard(SessionLocal, user: User):
         _run_auto_scan_enterprise(db_sess, active_org, employees)
         
         # Periodic systemic evaluation (Enterprise Mode)
-        # We can check if enough time has passed since the last auto-scan
-        if _should_run_auto_scan():
-            run_enterprise_scheduler(db_sess, active_org)
-            st.session_state.last_auto_scan = datetime.utcnow()
+        # We only run this if specifically requested via button now to prevent fake data injection
+        # if _should_run_auto_scan():
+        #     run_enterprise_scheduler(db_sess, active_org)
+        #     st.session_state.last_auto_scan = datetime.utcnow()
             
         employee_emails = [e.email for e in employees] or ["__none__"]
 
@@ -1212,7 +1183,8 @@ def render_enterprise_dashboard(SessionLocal, user: User):
         )
 
         # 1. Dashboard Metrics (Individual)
-        eri_data = calculate_eri(employees, org_breaches, db_sess.query(RemediationAction).all())
+        org_remediation_tasks = db_sess.query(RemediationAction).filter(RemediationAction.email.in_(employee_emails)).all()
+        eri_data = calculate_eri(employees, org_breaches, org_remediation_tasks)
         org_score = eri_data['eri']
         org_level = eri_data['label']
         metrics = eri_data['metrics']
@@ -1301,7 +1273,7 @@ def render_enterprise_dashboard(SessionLocal, user: User):
                         st.success("✅ Secure. This credential was not found in known breach snapshots.")
 
             # Debug: Force live scan and show results
-            with st.expander("Debug: Force live breach check (no persistence)"):
+            with st.expander("Debug & Maintenance"):
                 if st.button("Check first employee email now", key="check_employee_email_button"):
                     if employees:
                         test_email = employees[0].email
@@ -1316,6 +1288,15 @@ def render_enterprise_dashboard(SessionLocal, user: User):
                             st.json(result[:5])  # Show first 5 entries
                     else:
                         st.info("No employee emails to test.")
+                
+                st.divider()
+                if st.button("🗑️ Clear Organization Breach Data", key="clear_org_data_button"):
+                    db_sess.query(OrgBreach).filter_by(org_id=active_org.id).delete()
+                    db_sess.query(RiskHistory).filter_by(org_id=active_org.id).delete()
+                    db_sess.query(EmployeeRiskHistory).filter_by(org_id=active_org.id).delete()
+                    db_sess.commit()
+                    st.success("All organization breach data and history cleared.")
+                    st.rerun()
 
         with right:
             st.subheader("Organization Breach History")

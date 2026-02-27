@@ -10,6 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dotenv import load_dotenv
 from twilio.rest import Client
+from models import EmailPreview, ActivityLog
 
 # Force reload environment variables (important for Streamlit)
 load_dotenv(override=True)
@@ -27,7 +28,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_EMAIL = os.getenv("SMTP_EMAIL")  # Sender (molkyqwerty@gmail.com)
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
-def send_employee_alert_email(recipient_email, risk_level, score, breach_count, breaches_list=None):
+def send_employee_alert_email(recipient_email, risk_level, score, breach_count, breaches_list=None, db_session=None):
     """
     Send direct email alert to a specific employee.
     """
@@ -78,6 +79,27 @@ def send_employee_alert_email(recipient_email, risk_level, score, breach_count, 
             server.send_message(msg)
         
         print(f"✅ Direct employee alert sent to {recipient_email}")
+        
+        # Save preview to database if session provided
+        if db_session:
+            preview = EmailPreview(
+                recipient=recipient_email,
+                subject=msg['Subject'],
+                html_content=html,
+                risk_score=score,
+                status='sent'
+            )
+            db_session.add(preview)
+            
+            activity = ActivityLog(
+                email=recipient_email,
+                action='email_sent',
+                message=f"📧 Security alert email sent to {recipient_email}",
+                severity='info' if score < 85 else 'critical'
+            )
+            db_session.add(activity)
+            db_session.commit()
+            
         return True
     except Exception as e:
         print(f"❌ Direct employee alert failed: {e}")
@@ -137,7 +159,7 @@ def send_sms_alert(risk_level, score, email, breach_count):
         return False
 
 
-def send_email_alert(risk_level, score, email, breach_count, breaches_list=None):
+def send_email_alert(risk_level, score, email, breach_count, breaches_list=None, db_session=None):
     """
     Send email alert to molkyqwerty@gmail.com for high/critical risk detection
     
@@ -147,6 +169,7 @@ def send_email_alert(risk_level, score, email, breach_count, breaches_list=None)
         email: Email that triggered the alert
         breach_count: Number of breaches detected
         breaches_list: Optional list of breach details
+        db_session: Optional database session
     
     Returns:
         bool: True if email sent successfully, False otherwise
@@ -258,8 +281,28 @@ def send_email_alert(risk_level, score, email, breach_count, breaches_list=None)
             server.send_message(msg)
         
         print(f"✅ Email alert sent to {ALERT_EMAIL}")
-        return True
         
+        # Save preview to database if session provided
+        if db_session:
+            preview = EmailPreview(
+                recipient=email,
+                subject=msg['Subject'],
+                html_content=html,
+                risk_score=score,
+                status='sent'
+            )
+            db_session.add(preview)
+            
+            activity = ActivityLog(
+                email=email,
+                action='email_sent',
+                message=f"📧 Security alert email sent for {email}",
+                severity='info' if score < 85 else 'critical'
+            )
+            db_session.add(activity)
+            db_session.commit()
+            
+        return True
     except Exception as e:
         print(f"❌ Email alert failed: {e}")
         return False
@@ -304,7 +347,7 @@ def trigger_escalation(event_type: str, data: dict):
     return actions
 
 
-def send_combined_alert(risk_level, score, email, breach_count, breaches_list=None):
+def send_combined_alert(risk_level, score, email, breach_count, breaches_list=None, db_session=None):
     """
     Send both SMS and email alerts for high/critical risk
     
@@ -314,6 +357,7 @@ def send_combined_alert(risk_level, score, email, breach_count, breaches_list=No
         email: Email that triggered the alert
         breach_count: Number of breaches detected
         breaches_list: Optional list of breach details
+        db_session: Optional database session
     
     Returns:
         dict: Status of SMS and email sending
@@ -334,7 +378,7 @@ def send_combined_alert(risk_level, score, email, breach_count, breaches_list=No
     results['sms_sent'] = send_sms_alert(risk_level, score, email, breach_count)
     
     # Send email alert
-    results['email_sent'] = send_email_alert(risk_level, score, email, breach_count, breaches_list)
+    results['email_sent'] = send_email_alert(risk_level, score, email, breach_count, breaches_list, db_session=db_session)
     
     return results
 
