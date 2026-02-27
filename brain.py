@@ -17,58 +17,42 @@ BASE_URL = "https://haveibeenpwned.com/api/v3/breachedaccount"
 MIN_SECONDS_BETWEEN_REQUESTS = 1.6
 _last_hibp_request_ts = 0.0
 
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
-RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
-RAPIDAPI_EMAIL_URL_TEMPLATE = os.getenv("RAPIDAPI_EMAIL_URL_TEMPLATE")
-
 canaries = ["admin_trap@company.com", "honeypot@test.com", "fake_ceo@company.com"]
 
 def fetch_email_breaches(email):
-    global _last_hibp_request_ts
-    if not RAPIDAPI_KEY or not RAPIDAPI_HOST or not RAPIDAPI_EMAIL_URL_TEMPLATE:
-        print("Error: RapidAPI email breach lookup is not configured.")
-        print("Set RAPIDAPI_KEY, RAPIDAPI_HOST, and RAPIDAPI_EMAIL_URL_TEMPLATE in your environment.")
-        return None
-
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST,
-        "user-agent": "ZeroTrust-AI-Monitor",
-    }
-
     try:
-        now = time.time()
-        wait_s = MIN_SECONDS_BETWEEN_REQUESTS - (now - _last_hibp_request_ts)
-        if wait_s > 0:
-            time.sleep(wait_s)
-
-        url = RAPIDAPI_EMAIL_URL_TEMPLATE.format(email=email)
-        response = requests.get(url, headers=headers, timeout=20)
-        _last_hibp_request_ts = time.time()
-
-        if response.status_code == 200:
-            data = response.json()
-            if data is None:
-                return []
-            if isinstance(data, list):
-                return data
-            breaches = data.get("breaches") if isinstance(data, dict) else None
-            if isinstance(breaches, list):
-                return breaches
-            return data
-        elif response.status_code == 404:
-            return []
-        elif response.status_code == 429:
-            print("Rate limited by RapidAPI (429). Slow down requests.")
-            return None
-        elif response.status_code in (401, 403):
-            print("Error: Unauthorized/Forbidden. Check your RapidAPI key and plan.")
-            return None
-        else:
+        url = f"https://leakcheck.io/api/public?check={email}"
+        response = requests.get(url, timeout=15)
+        if response.status_code != 200:
             print(f"Error: {response.status_code} - {response.text}")
             return None
-    except Exception as e:
-        print(f"Connection Error: {e}")
+
+        data = response.json()
+        if not isinstance(data, dict):
+            return None
+
+        if data.get("success") and data.get("found", 0) > 0:
+            sources = data.get("sources", [])
+            breaches = []
+            if isinstance(sources, list):
+                for src in sources:
+                    if isinstance(src, dict):
+                        src_name = src.get("name") or "Unknown"
+                        src_date = src.get("date") or "Unknown"
+                    else:
+                        src_name = str(src)
+                        src_date = "Unknown"
+                    breaches.append({
+                        "Name": str(src_name),
+                        "DataClasses": ["Email"],
+                        "Source": "LeakCheck",
+                        "BreachDate": str(src_date),
+                    })
+            return breaches
+
+        return []
+    except requests.exceptions.RequestException as e:
+        print("Connection error:", e)
         return None
 
 
@@ -142,7 +126,7 @@ def pwned_password_count(password):
 
 if __name__ == "__main__":
     print("=== Backend Smoke Test (No Dashboard) ===")
-    print("1) Email breach check (RapidAPI key required)")
+    print("1) Email breach check (LeakCheck public API)")
     print("2) Password pwned check (no API key required)")
     mode = input("Choose (1/2): ").strip()
 
@@ -157,7 +141,6 @@ if __name__ == "__main__":
             print("Pwned: NO")
         raise SystemExit(0)
 
-    print("Set RAPIDAPI_KEY / RAPIDAPI_HOST / RAPIDAPI_EMAIL_URL_TEMPLATE in your environment (or .env) before running email checks.")
     test_email = input("Enter email to check: ").strip()
     if not test_email:
         raise SystemExit("No email entered")
